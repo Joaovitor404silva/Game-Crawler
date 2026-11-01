@@ -18,18 +18,18 @@ jobs:
     name: Build and test against Game Crawler
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: Joaovitor404silva/Game-Crawler
           ref: ${{ inputs.crawler-ref }}
           path: crawler
           submodules: recursive
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: crawler/plugins/${{ inputs.name }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
       - name: Build plugin
         shell: cmd
         working-directory: crawler

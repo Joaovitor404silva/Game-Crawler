@@ -11,12 +11,12 @@ jobs:
     name: Core build and tests
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
       - name: Build loader, proxy and core
         shell: cmd
         run: call src\build.bat
@@ -31,12 +31,12 @@ jobs:
     name: Plugin builds and tests
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
       - name: Build and test every plugin in plugins/
         shell: bash
         run: |
