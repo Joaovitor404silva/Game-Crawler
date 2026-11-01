@@ -100,7 +100,11 @@ static int PropElem(uintptr_t p) { return Rd<int>(p + P_ELEMSIZE); }
 static int PropDim(uintptr_t p) { return Rd<int>(p + P_ARRAYDIM); }
 static uint64_t PropFlags(uintptr_t p) { return Rd<uint64_t>(p + P_FLAGS); }
 static uintptr_t PropX(uintptr_t p, int k = 0) { return RdP(p + P_SIZE + k * 8); }
-static uintptr_t PropInner(uintptr_t p) { return PropX(p, cnt::InnerSlot(PropType(p).c_str())); }
+static uintptr_t PropInner(uintptr_t p) {
+  int pref = cnt::InnerSlot(PropType(p).c_str());
+  for (int k : { pref, 1 - pref }) { uintptr_t x = PropX(p, k); if (x && (RdP(x + 0x10) & ~(uintptr_t)1) == p) return x; }
+  return PropX(p, pref);
+}
 
 static void ForProps(uintptr_t st, bool supers, std::function<bool(uintptr_t)> fn) {
   for (uintptr_t s = st; s; s = supers ? SuperOf(s) : 0) {
@@ -661,18 +665,20 @@ static uintptr_t FindPoseMesh(uintptr_t actor) {
 
 static bool ResolveBones(uintptr_t mesh, const std::string& spec, std::vector<std::string>& bones, std::string& err) {
   std::string sp = Lower(spec);
-  if (sp != "legs" && sp != "all") { bones = pse::BoneSet(sp == "hands" || sp == "arms" ? sp : spec); return true; }
+  if (sp != "all" && !pse::IsPreset(sp)) { bones = pse::BoneSet(spec); return true; }
+  if (sp.empty()) sp = "hands";
   std::vector<PCall> one(1);
   if (!PrepCall(mesh, "GetNumBones", {}, one[0], err) || !RunCalls(one, err)) return false;
   int nb = 0; if (!CallInt(one[0], nb) || nb <= 0 || nb > 4096) { err = "GetNumBones returned no bones"; return false; }
   std::vector<PCall> names((size_t)nb);
   for (int i = 0; i < nb; i++) if (!PrepCall(mesh, "GetBoneName", { std::to_string(i) }, names[i], err)) return false;
   if (!RunCalls(names, err)) return false;
+  bones.clear();
   for (int i = 0; i < nb; i++) {
     if (names[i].code || !names[i].ret) continue;
     uint64_t fn; memcpy(&fn, names[i].buf.data() + PropOff(names[i].ret), 8);
     std::string n = NameStr(fn);
-    if (sp == "all" ? (int)bones.size() < 200 : pse::IsLegBone(n)) bones.push_back(n);
+    if (sp == "all" ? (int)bones.size() < 200 : pse::InPreset(n, sp)) bones.push_back(n);
   }
   return true;
 }

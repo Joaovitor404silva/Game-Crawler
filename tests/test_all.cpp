@@ -204,9 +204,11 @@ static void TestPose() {
   r2[0].comp.t[0] = 3; r2[0].comp.t[1] = 4;
   pse::Finish(r2);
   CHECK(r2[0].flag == "TWIST" && fabs(r2[0].dRot - 40.0) < 1e-6 && fabs(r2[0].dLoc - 5.0) < 1e-9);
-  auto h = pse::BoneSet(""); CHECK(h.size() == 8 && h[0] == "jnt_r_hand" && h[7] == "jnt_item");
+  CHECK(pse::BoneSet("").empty() && pse::IsPreset("") && pse::IsPreset("arms") && !pse::IsPreset("hand_r"));
   auto cu = pse::BoneSet("a,b,,c"); CHECK(cu.size() == 3 && cu[2] == "c");
-  CHECK(pse::IsLegBone("jnt_l_thigh") && pse::IsLegBone("jnt_r_toe") && !pse::IsLegBone("jnt_r_hand") && !pse::IsLegBone("pelvis"));
+  CHECK(pse::InPreset("jnt_l_thigh", "legs") && pse::InPreset("jnt_r_toe", "legs") && !pse::InPreset("jnt_r_hand", "legs") && !pse::InPreset("pelvis", "legs"));
+  CHECK(pse::InPreset("hand_r", "hands") && pse::InPreset("LowerArm_L", "hands") && !pse::InPreset("upperarm_l", "hands") && pse::InPreset("upperarm_l", "arms"));
+  CHECK(pse::InPreset("jnt_r_fore_arm", "hands") && pse::InPreset("jnt_l_arm", "arms") && !pse::InPreset("lowerarm_twist_01_l", "hands") && !pse::InPreset("ik_hand_r", "hands"));
 }
 
 static void TestContainers() {

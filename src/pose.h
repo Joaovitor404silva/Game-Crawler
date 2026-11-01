@@ -54,10 +54,7 @@ inline std::string SideOf(const std::string& bone) {
 }
 
 inline std::vector<std::string> BoneSet(const std::string& spec) {
-  static const char* hands[] = { "jnt_r_hand", "jnt_l_hand", "jnt_r_fore_arm", "jnt_l_fore_arm", "jnt_r_arm", "jnt_l_arm", "jnt_r_weapon", "jnt_item" };
   std::vector<std::string> v;
-  if (spec.empty() || spec == "hands") { for (auto* h : hands) v.push_back(h); return v; }
-  if (spec == "arms") { for (auto* h : hands) v.push_back(h); v.push_back("jnt_r_shoulder"); v.push_back("jnt_l_shoulder"); return v; }
   size_t s = 0;
   while (s <= spec.size()) {
     size_t e = spec.find(',', s); std::string it = spec.substr(s, e == std::string::npos ? std::string::npos : e - s);
@@ -67,11 +64,17 @@ inline std::vector<std::string> BoneSet(const std::string& spec) {
   return v;
 }
 
-inline bool IsLegBone(const std::string& n) {
-  static const char* parts[] = { "thigh", "calf", "foot", "toe" };
-  if (n.find("jnt_l_") != 0 && n.find("jnt_r_") != 0) return false;
-  for (auto* p : parts) if (n.find(p) != std::string::npos) return true;
-  return false;
+inline bool IsPreset(const std::string& spec) { return spec.empty() || spec == "hands" || spec == "arms" || spec == "legs"; }
+inline bool InPreset(const std::string& bone, const std::string& spec) {
+  static const char* hands[] = { "hand", "forearm", "fore_arm", "lowerarm", "lower_arm", "weapon" };
+  static const char* arms[] = { "upperarm", "upper_arm", "clavicle", "shoulder", "_arm" };
+  static const char* legs[] = { "thigh", "calf", "foot", "toe", "shin", "knee" };
+  std::string n = bone; for (auto& c : n) if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+  if (n.find("twist") != std::string::npos || n.find("ik_") == 0) return false;
+  auto any = [&](const char* const* p, size_t k) { for (size_t i = 0; i < k; i++) if (n.find(p[i]) != std::string::npos) return true; return false; };
+  if (spec == "legs") return any(legs, 6);
+  if (any(hands, 6)) return true;
+  return spec == "arms" && any(arms, 5);
 }
 
 struct Row {
