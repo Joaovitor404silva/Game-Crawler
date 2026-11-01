@@ -38,6 +38,10 @@ void JsonSetData(const std::string& rawJson);
 void JsonSetOk(bool ok);
 
 
+void InitBot();
+void ShutdownBot();
+bool HandleBot(const std::string& c, const std::vector<std::string>& t, Out& o);
+
 void InitProbe();
 void ShutdownProbe();
 bool HandleProbe(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o);

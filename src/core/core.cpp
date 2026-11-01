@@ -269,6 +269,7 @@ static void CmdLogTail(Out& o, int n) {
 
 static const char* HELP =
   "loader: ping | reload | unload\n"
+  "bot:    bot status | bot key <k> [tap|down|up] | bot text <s> | bot move <dx> <dy> | bot moveto <x> <y> | bot click [btn] [x y] | bot wheel <n> | bot home | bot release (input injected in-process: no focus or real mouse needed)\n"
   "mem:    rd <addr> [n] | wr <addr> <hexbytes> | ptr <expr e.g. [[pawn+0x650]+0x660]+0x38> | aob <pattern> | rva <addr> | va <rva> | mods | sym <addr> | addr <name|substr> | names (reload names.tsv)\n"
   "export: dumpfuncs <file> | dumpvtables <file> | dumpsdk <file> | dumpfieldvt <file> | callees <rvalist> <out>\n"
   "uobj:   find <substr|class:Name|isa:Name> [max] [near=<obj|x,y,z>] [r=cm] [loc] [new=N] [since=idx] [hidden=0|1] [nodef] | comps <obj> [filter=..] [flat] | pose <actor> [bones=hands|arms|legs|all|a,b] [ref=<actor>] [comps] [space=world|comp|parent] | tarray|tset|tmap <obj> <Prop.Path> [max=N] [key=..] | tset raw <addr> <elemsize> [max] | layoutcheck <Class> [obj] | obj <addr|name|pawn|pc> | get <obj> <prop.path> | set <obj> <prop.path> <value>\n"
@@ -393,7 +394,7 @@ static void HandleText(const char* line, EmitFn emit, void* ctx) {
     auto h = Aob(rest(1), g_textBeg, g_textEnd, 32);
     for (auto x : h) o.f("0x%llx  %s", x, Sym(x).c_str()); o.f("%zu hits (max 32)", h.size());
   }
-  else if (!EngineHandle(c, t, L, o) && !HandleHooks(c, t, o) && !HandleProbe(c, t, L, o) && !HandlePlugins(c, t, o)) o.line(ActiveEngine() ? "unknown command (help)" : "unknown command (help); engine commands need a backend and none was detected (engine)");
+  else if (!EngineHandle(c, t, L, o) && !HandleHooks(c, t, o) && !HandleProbe(c, t, L, o) && !HandleBot(c, t, o) && !HandlePlugins(c, t, o)) o.line(ActiveEngine() ? "unknown command (help)" : "unknown command (help); engine commands need a backend and none was detected (engine)");
 }
 
 extern "C" __declspec(dllexport) void CoreHandle(const char* line, EmitFn emit, void* ctx) {
@@ -442,12 +443,14 @@ extern "C" __declspec(dllexport) int CoreInit(HostApi* api) {
   InitHooks();
   InitPlugins();
   InitProbe();
+  InitBot();
   LOG("core init done (built %s %s)", __DATE__, __TIME__);
   return 1;
 }
 
 extern "C" __declspec(dllexport) void CoreShutdown() {
   InterlockedExchange(&g_warmStop, 1); if (g_warm) { WaitForSingleObject(g_warm, 10000); CloseHandle(g_warm); g_warm = nullptr; }
+  ShutdownBot();
   ShutdownProbe();
   ShutdownPlugins();
   ShutdownHooks();

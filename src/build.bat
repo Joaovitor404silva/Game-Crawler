@@ -12,5 +12,5 @@ cl %CF% /LD core\loader.cpp %MH% /Fe%UEOUT%\GameCrawler.dll /link /DEBUG /PDB:%U
 if not exist %UEOUT%\proxy mkdir %UEOUT%\proxy
 cl %CF% /LD core\proxy.cpp /Fe%UEOUT%\proxy\version.dll /link /NOIMPLIB /NOEXP || exit /b 1
 :core
-cl %CF% /LD core\core.cpp core\util.cpp core\hooks.cpp core\probe.cpp core\plugins.cpp core\core_seh.cpp engines\engine.cpp engines\ue\ue.cpp %MH% /Fe%UEOUT%\GameCrawlerCore.dll /link /DEBUG /PDB:%UEOUT%\GameCrawlerCore_%RANDOM%.pdb psapi.lib advapi32.lib winmm.lib || exit /b 1
+cl %CF% /LD core\core.cpp core\util.cpp core\hooks.cpp core\probe.cpp core\plugins.cpp core\core_seh.cpp core\bot.cpp engines\engine.cpp engines\ue\ue.cpp %MH% /Fe%UEOUT%\GameCrawlerCore.dll /link /DEBUG /PDB:%UEOUT%\GameCrawlerCore_%RANDOM%.pdb psapi.lib advapi32.lib winmm.lib user32.lib || exit /b 1
 echo BUILD OK

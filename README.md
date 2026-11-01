@@ -89,6 +89,11 @@ Main command groups:
 - **game state:** `scene` (preflight: world, pc, pawn), `comps <actor>`, `pose <actor>`, `tarray|tset|tmap <obj> <Prop.Path>`,
   `layoutcheck <Class>`
 - **capture:** `snap` (typed memory fixture -> `snaps\<name>.json`), `sample` (in-core sampler), `memdiff` (which bytes change), `stats`
+- **memory scan:** `scan <type> <eq|changed|inc|dec> [v]`, `scan list`, `scan set <v>`, `scan clear` (value hunt on any game)
+- **input bot:** `bot key <k> [tap|down|up]`, `bot text <s>`, `bot move <dx> <dy>`, `bot moveto <x> <y>`, `bot click [btn] [x y]`,
+  `bot wheel <n>`, `bot home`, `bot release`, `bot focus [on|off]`, `bot status` (any game; injected in-process via window
+  messages, key-state polls, raw input and DirectInput, so the real mouse stays free; `focus on` makes a background game
+  accept keys; `status` shows which input API the game reads)
 - **misc:** `xcall <addr|Name> [rcx rdx r8 r9]`, `mark`, `log [n]`, `plug list|build|reload|unload <name>`
 
 `pawn` and `pc` resolve to the local player's pawn and controller. Commands sent before the engine is up answer
@@ -98,7 +103,7 @@ Main command groups:
 
 `status, find, obj, get, set, call, funcs, props, classes, rd, wr, ptr, sym, addr, names, decomp, native, hook, unhook, hooks, bp,
 bpc, bps, hits, watchw, agg, scene, snap, sample, comps, pose, tarray, tset, tmap, layoutcheck, memdiff, stats, batch, mark, watch,
-unwatch, plugin, con, log, reload_core, raw`
+unwatch, plugin, con, log, scan, bot, reload_core, raw`
 
 Every tool takes an optional `game` (port or alias) to target one of several dev games, and `all` runs it on every port.
 Results are capped at 12000 characters (`CRAWLER_MCP_CAP`).

@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include "ue_scan.h"
 #include "scan.h"
+#include "bot.h"
 
 extern HostApi g_testApi;
 extern std::vector<std::string> g_testLog;
@@ -255,6 +256,15 @@ static void PutEntry(FakeMem& m, uint64_t at, const char* s, bool wide = false) 
   uint16_t len = (uint16_t)strlen(s), h = (uint16_t)((len << 6) | (wide ? 1 : 0)); m.Put(at, h);
   for (uint16_t i = 0; i < len; i++) { if (wide) m.Put<uint16_t>(at + 2 + i * 2, (uint16_t)s[i]); else m.Put<uint8_t>(at + 2 + i, (uint8_t)s[i]); }
 }
+static void TestBot() {
+  using namespace bot;
+  CHECK(ParseKey("W") == 'W' && ParseKey("7") == '7' && ParseKey("f12") == VK_F12 && ParseKey("space") == VK_SPACE && ParseKey("0x41") == 0x41);
+  CHECK(ParseKey("vk13") == 13 && ParseKey("num5") == VK_NUMPAD5 && ParseKey("~") == VK_OEM_3 && ParseKey("nope") == 0 && ParseKey("f25") == 0);
+  CHECK(DikOf(0x48, VK_UP) == 0xC8 && DikOf(0x11, 'W') == 0x11);
+  CHECK(KeyLParam(0x11, 'W', true) == (1 | (0x11 << 16)) && ((KeyLParam(0x48, VK_UP, false) >> 24) & 0xC1) == 0xC1);
+  CHECK(ButtonIndex("left") == 0 && ButtonIndex("rmb") == 1 && ButtonIndex("x2") == 4 && ButtonIndex("q") == -1);
+  CHECK(ParseVia("msg,raw") == (bot::MSG | bot::RAW) && ParseVia("all") == bot::ALL && ParseVia("di") == bot::DI && ParseVia("x") == 0 && ParseVia("msg,") == 0);
+}
 static void TestScan() {
   using namespace scn;
   CHECK(ParseType("f32") == F32 && ParseType("int") == I32 && ParseType("x") == BAD && ParseOp("dec") == DEC && ParseOp("?") == OPBAD);
@@ -483,7 +493,7 @@ int main(int argc, char** argv) {
   SetEnvironmentVariableA("CRAWLER_PORT", "27999");
   g_testApi.base = (uintptr_t)GetModuleHandleA(nullptr); g_testApi.gameThreadId = GetCurrentThreadId();
   H = &g_testApi;
-  TestJsonOut(); TestAgg(); TestChunk(); TestSampler(); TestWalk(); TestDetour(); TestStats(); TestUopt(); TestMemdiff(); TestRetry(); TestPose(); TestContainers(); TestPlugRestore(); TestHwHook(); TestUeScan(); TestScan();
+  TestJsonOut(); TestAgg(); TestChunk(); TestSampler(); TestWalk(); TestDetour(); TestStats(); TestUopt(); TestMemdiff(); TestRetry(); TestPose(); TestContainers(); TestPlugRestore(); TestHwHook(); TestUeScan(); TestScan(); TestBot();
   printf("unit: %d pass, %d fail\n", g_pass, g_fail);
   if (argc > 2 && !strcmp(argv[1], "--scenario")) {
     CoreInit(&g_testApi);
