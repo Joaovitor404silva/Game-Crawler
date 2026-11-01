@@ -71,43 +71,21 @@ static void CmdLayoutCheck(const std::vector<std::string>& t, Out& o) {
   uintptr_t cls = ResolveStruct(t[1]); if (!cls) { o.line("cannot resolve class " + t[1]); return; }
   uintptr_t obj = 0;
   if (t.size() > 2) { obj = ResolveObj(t[2]); if (!obj) { o.line("cannot resolve object " + t[2]); return; } }
-  std::string dir = UEnv("UESCAN_SDK", UEPath("sdk")), name = ObjName(cls);
-  std::map<std::string, std::pair<long, long>> sdk; long sdkSize = -1; bool haveSdk = false;
-  for (const std::string& n : { name, t[1] }) {
-    FILE* f = fopen((dir + "\\" + n + ".tsv").c_str(), "r"); if (!f) continue;
-    haveSdk = true; char buf[512];
-    while (fgets(buf, sizeof buf, f)) {
-      std::string l = buf; while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
-      size_t a1 = l.find('\t'); if (a1 == std::string::npos) continue;
-      size_t a2 = l.find('\t', a1 + 1);
-      if (l.rfind("#size", 0) == 0) { sdkSize = strtol(l.c_str() + a1 + 1, nullptr, 0); continue; }
-      if (a2 == std::string::npos) continue;
-      sdk[l.substr(0, a1)] = { strtol(l.c_str() + a1 + 1, nullptr, 0), strtol(l.c_str() + a2 + 1, nullptr, 0) };
-    }
-    fclose(f); break;
-  }
-  if (!haveSdk) o.line("note: no sdk table " + dir + "\\" + name + ".tsv (no generator since the rag was removed; dumpsdk <file> writes every live layout); live checks only");
-  int props = 0, bad = 0; std::vector<std::string> js; std::set<std::string> seen;
-  o.line("name                           live_off sdk_off size   status");
+  int props = 0, bad = 0; std::vector<std::string> js;
+  o.line("name                           live_off size   status");
   ForProps(cls, false, [&](uintptr_t q) {
-    std::string pn = PropName(q); int off = PropOff(q), sz = PropElem(q) * std::max(1, PropDim(q)); props++; seen.insert(pn);
-    std::string st = "ok", so = "-"; auto it = sdk.find(pn);
-    if (haveSdk) {
-      if (it == sdk.end()) st = "MISSING";
-      else { so = Fmt("0x%lx", it->second.first); if (it->second.first != off) st = "OFF"; else if (it->second.second != sz) st = "SIZE"; }
-    }
-    if (obj && st == "ok") {
+    std::string pn = PropName(q); int off = PropOff(q), sz = PropElem(q) * std::max(1, PropDim(q)); props++;
+    std::string st = "ok";
+    if (obj) {
       uint8_t b; if (!SafeRead(&b, obj + off, 1)) st = "UNREADABLE";
       else if (PropType(q) == "ObjectProperty") { uintptr_t pv = RdP(obj + off); if (pv && !IsObj(pv)) st = "BADPTR"; }
     }
     if (st != "ok") bad++;
-    o.f("%-30s 0x%-6x %-7s %-6d %s", pn.c_str(), off, so.c_str(), sz, st.c_str());
-    js.push_back(jo::Obj().str("name", pn).num("live_off", off).str("sdk_off", so).num("size", sz).str("status", st).done());
+    o.f("%-30s 0x%-6x %-6d %s", pn.c_str(), off, sz, st.c_str());
+    js.push_back(jo::Obj().str("name", pn).num("live_off", off).num("size", sz).str("status", st).done());
     return true;
   });
-  for (auto& kv : sdk) if (!seen.count(kv.first)) { bad++; o.f("%-30s %-8s 0x%-5lx %-6ld SDKONLY", kv.first.c_str(), "-", kv.second.first, kv.second.second); js.push_back(jo::Obj().str("name", kv.first).str("status", "SDKONLY").done()); }
-  int live = Rd<int>(cls + S_SIZE); std::string cs = Fmt("class size 0x%x", live);
-  if (sdkSize >= 0) { cs += sdkSize == live ? Fmt(" == sdk 0x%lx", sdkSize) : Fmt(" != sdk 0x%lx", sdkSize); if (sdkSize != live) bad++; }
-  o.f("%d props, %d mismatches, %s", props, bad, cs.c_str());
-  JsonSetData(jo::Obj().str("class", name).num("props", props).num("mismatches", bad).num("class_size", live).num("sdk_size", sdkSize).raw("rows", jo::Arr(js)).done());
+  int live = Rd<int>(cls + S_SIZE);
+  o.f("%d props, %d bad, class size 0x%x", props, bad, live);
+  JsonSetData(jo::Obj().str("class", ObjName(cls)).num("props", props).num("bad", bad).num("class_size", live).raw("rows", jo::Arr(js)).done());
 }

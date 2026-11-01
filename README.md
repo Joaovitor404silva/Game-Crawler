@@ -167,7 +167,6 @@ and the PE imports and exports of the exe (read from the running game, or `--exe
 | `UESCAN_NAMES` | `names\names.tsv` | Names database |
 | `UESCAN_NATIVES` | `names\natives_impl.tsv` | Native exec -> impl table |
 | `UESCAN_DECOMP` | `decomp` | Decompile dump folder (MCP `decomp`) |
-| `UESCAN_SDK` | `sdk` | Per-class SDK tables for `layoutcheck` |
 | `UESCAN_TIMEOUT`, `UESCAN_MCP_CAP`, `UESCAN_ALL_PORTS` | | CLI/MCP timeout, MCP result cap, port list for `game=all` |
 
 ## Tests
