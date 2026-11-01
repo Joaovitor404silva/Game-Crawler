@@ -2,6 +2,7 @@
 #include "json_out.h"
 #include "sampler.h"
 #include "memdiff.h"
+#include "scan.h"
 #include <memory>
 #include <algorithm>
 #include <mutex>
@@ -245,9 +246,89 @@ void CmdSnap(const std::vector<std::string>& t, Out& o) {
   o.f("snap %s 0x%llx len %llu type %s fields %zu -> %s.json (+ .bin)", name.c_str(), a, len, tname.empty() ? "-" : tname.c_str(), fields.size(), base.c_str());
 }
 
+
+static std::mutex g_scanM;
+static scn::Type g_scanT = scn::BAD;
+static std::vector<scn::Hit> g_scan;
+static double g_scanTol = 0.01;
+
+static bool ScanReadable(const MEMORY_BASIC_INFORMATION& m) {
+  if (m.State != MEM_COMMIT || (m.Protect & PAGE_GUARD) || (m.Protect & PAGE_NOACCESS)) return false;
+  DWORD p = m.Protect & 0xff;
+  return p == PAGE_READWRITE || p == PAGE_WRITECOPY || p == PAGE_EXECUTE_READWRITE || p == PAGE_EXECUTE_WRITECOPY;
+}
+
+static void ScanPrint(Out& o, size_t n) {
+  size_t shown = std::min(n, g_scan.size());
+  for (size_t i = 0; i < shown; i++) {
+    const auto& h = g_scan[i]; uint8_t b[8] = {}; std::string cur = "?";
+    if (g_scanT != scn::STR && SafeRead(b, h.addr, scn::Size(g_scanT))) cur = scn::Fmt(g_scanT, scn::Load(g_scanT, b));
+    o.f("[%zu] 0x%llx  %s  %s", i, (unsigned long long)h.addr, cur.c_str(), Sym(h.addr).c_str());
+  }
+  o.f("%zu hits (%s)%s", g_scan.size(), scn::TypeName(g_scanT), g_scan.size() > shown ? Fmt(", showing %zu", shown).c_str() : "");
+}
+
+static void CmdScan(const std::vector<std::string>& t, Out& o) {
+  static const char* usage = "usage: scan <i8|i16|i32|i64|f32|f64|str> <value> [tol=0.01] [max=N] | scan next <eq <v>|changed|unchanged|inc|dec> | scan list [n] | scan set <value> [index] | scan clear";
+  if (t.size() < 2) { o.line(usage); return; }
+  std::lock_guard<std::mutex> l(g_scanM);
+  const std::string& a = t[1];
+  if (a == "clear") { g_scan.clear(); g_scan.shrink_to_fit(); g_scanT = scn::BAD; o.line("scan cleared"); return; }
+  if (a == "list") { if (g_scanT == scn::BAD) { o.line("no scan (scan <type> <value>)"); return; } ScanPrint(o, t.size() > 2 ? (size_t)atoi(t[2].c_str()) : 20); return; }
+  if (a == "next") {
+    if (g_scanT == scn::BAD || g_scanT == scn::STR) { o.line("error: no numeric scan to refine"); return; }
+    if (t.size() < 3) { o.line(usage); return; }
+    scn::Op op = scn::ParseOp(t[2]); scn::Val want;
+    if (op == scn::OPBAD) { o.line("error: op must be eq|changed|unchanged|inc|dec"); return; }
+    if (op == scn::EQ && (t.size() < 4 || !scn::ParseVal(g_scanT, t[3], want))) { o.line("error: eq needs a value"); return; }
+    size_t before = g_scan.size(), k = 0; uint8_t b[8];
+    for (auto& h : g_scan) {
+      if (!SafeRead(b, h.addr, scn::Size(g_scanT))) continue;
+      scn::Val cur = scn::Load(g_scanT, b);
+      if (scn::Keep(g_scanT, op, h.last, cur, want, g_scanTol)) { h.last = cur; g_scan[k++] = h; }
+    }
+    g_scan.resize(k);
+    o.f("scan next %s: %zu -> %zu hits", t[2].c_str(), before, k);
+    ScanPrint(o, 20); return;
+  }
+  if (a == "set") {
+    if (g_scanT == scn::BAD || g_scanT == scn::STR || t.size() < 3) { o.line("error: scan set <value> [index] needs a numeric scan"); return; }
+    scn::Val v; if (!scn::ParseVal(g_scanT, t[2], v)) { o.line("error: bad value " + t[2]); return; }
+    uint8_t b[8]; scn::Store(g_scanT, v, b); size_t sz = scn::Size(g_scanT), from = 0, to = g_scan.size();
+    if (t.size() > 3) { from = (size_t)atoi(t[3].c_str()); to = from + 1; if (from >= g_scan.size()) { o.line("error: index out of range"); return; } }
+    if (to - from > 64) { o.f("error: %zu hits; refine to 64 or fewer, or give an index", to - from); return; }
+    int ok = 0;
+    for (size_t i = from; i < to; i++) { DWORD old; uintptr_t p = g_scan[i].addr; if (VirtualProtect((void*)p, sz, PAGE_EXECUTE_READWRITE, &old)) { memcpy((void*)p, b, sz); VirtualProtect((void*)p, sz, old, &old); ok++; } }
+    o.f("wrote %s to %d of %zu address(es)", t[2].c_str(), ok, to - from); return;
+  }
+  scn::Type ty = scn::ParseType(a);
+  if (ty == scn::BAD || t.size() < 3) { o.line(usage); return; }
+  scn::Val want; std::string str;
+  if (ty == scn::STR) str = t[2]; else if (!scn::ParseVal(ty, t[2], want)) { o.line("error: bad value " + t[2]); return; }
+  double tol = 0.01; size_t cap = 2000000;
+  for (size_t i = 3; i < t.size(); i++) { if (t[i].rfind("tol=", 0) == 0) tol = atof(t[i].c_str() + 4); else if (t[i].rfind("max=", 0) == 0) cap = (size_t)atoll(t[i].c_str() + 4); }
+  g_scan.clear(); g_scanT = ty; g_scanTol = tol;
+  ULONGLONG t0 = GetTickCount64(); uint64_t bytes = 0; int regions = 0;
+  std::vector<uint8_t> buf(4 << 20);
+  MEMORY_BASIC_INFORMATION m; uintptr_t p = 0x10000;
+  while (g_scan.size() < cap && VirtualQuery((void*)p, &m, sizeof m) == sizeof m) {
+    uintptr_t rb = (uintptr_t)m.BaseAddress, re = rb + m.RegionSize; p = re; if (re <= rb) break;
+    if (!ScanReadable(m)) continue;
+    regions++;
+    for (uintptr_t c = rb; c < re && g_scan.size() < cap; c += buf.size()) {
+      size_t n = (size_t)std::min<uintptr_t>(buf.size(), re - c); SIZE_T got = 0;
+      if (!ReadProcessMemory(GetCurrentProcess(), (void*)c, buf.data(), n, &got) || !got) continue;
+      bytes += got; scn::ScanBlock(ty, buf.data(), got, c, want, tol, str, g_scan, cap);
+    }
+  }
+  o.f("scan %s %s: %zu hits in %d regions, %.1f MB, %llu ms%s", scn::TypeName(ty), t[2].c_str(), g_scan.size(), regions, bytes / 1048576.0, GetTickCount64() - t0, g_scan.size() >= cap ? " (capped; refine with scan next)" : "");
+  ScanPrint(o, 20);
+}
+
 bool HandleProbe(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o) {
   if (c == "sample") { CmdSample(t, o); return true; }
   if (c == "memdiff") { CmdMemdiff(t, o); return true; }
   if (c == "snap") { CmdSnap(t, o); return true; }
+  if (c == "scan") { CmdScan(t, o); return true; }
   return false;
 }

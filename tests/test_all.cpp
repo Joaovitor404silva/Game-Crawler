@@ -16,6 +16,7 @@
 #include <atomic>
 #include <stdio.h>
 #include "ue_scan.h"
+#include "scan.h"
 
 extern HostApi g_testApi;
 extern std::vector<std::string> g_testLog;
@@ -254,6 +255,26 @@ static void PutEntry(FakeMem& m, uint64_t at, const char* s, bool wide = false) 
   uint16_t len = (uint16_t)strlen(s), h = (uint16_t)((len << 6) | (wide ? 1 : 0)); m.Put(at, h);
   for (uint16_t i = 0; i < len; i++) { if (wide) m.Put<uint16_t>(at + 2 + i * 2, (uint16_t)s[i]); else m.Put<uint8_t>(at + 2 + i, (uint8_t)s[i]); }
 }
+static void TestScan() {
+  using namespace scn;
+  CHECK(ParseType("f32") == F32 && ParseType("int") == I32 && ParseType("x") == BAD && ParseOp("dec") == DEC && ParseOp("?") == OPBAD);
+  uint8_t buf[64] = {}; int32_t v = 1234; memcpy(buf + 8, &v, 4); memcpy(buf + 13, &v, 4); float fl = 7.5f; memcpy(buf + 20, &fl, 4);
+  memcpy(buf + 40, "money", 5);
+  std::vector<Hit> h; Val w; CHECK(ParseVal(I32, "1234", w));
+  ScanBlock(I32, buf, sizeof buf, 0x1000, w, 0, "", h, 100);
+  CHECK(h.size() == 1 && h[0].addr == 0x1008);
+  h.clear(); ScanBlock(I32, buf, sizeof buf, 0x1003, w, 0, "", h, 100);
+  CHECK(h.size() == 1 && h[0].addr == 0x1003 + 13);
+  h.clear(); CHECK(ParseVal(F32, "7.504", w)); ScanBlock(F32, buf, sizeof buf, 0x1000, w, 0.01, "", h, 100);
+  CHECK(h.size() == 1 && h[0].addr == 0x1014 && fabs(h[0].last.d - 7.5) < 1e-6);
+  h.clear(); ScanBlock(STR, buf, sizeof buf, 0x1000, w, 0, "money", h, 100); CHECK(h.size() == 1 && h[0].addr == 0x1028);
+  h.clear(); CHECK(ParseVal(I8, "0", w)); ScanBlock(I8, buf, sizeof buf, 0, w, 0, "", h, 5); CHECK(h.size() == 5);
+  Val a, b, z; a.i = 5; a.d = 5; b.i = 7; b.d = 7;
+  CHECK(Keep(I32, INC, a, b, z, 0) && !Keep(I32, DEC, a, b, z, 0) && Keep(I32, CHANGED, a, b, z, 0) && !Keep(I32, UNCHANGED, a, b, z, 0));
+  uint8_t out[8]; Val sv; sv.d = 2.5; CHECK(Store(F32, sv, out)); float back; memcpy(&back, out, 4); CHECK(back == 2.5f);
+  CHECK(Fmt(F32, sv) == "2.5" && !ParseVal(I32, "12x", w));
+}
+
 static void TestUeScan() {
   FakeMem m; m.r[0x1000] = std::vector<uint8_t>(0x200); m.r[0x100000] = std::vector<uint8_t>(0x100); m.r[0x200000] = std::vector<uint8_t>(0x200); m.r[0x300000] = std::vector<uint8_t>(0x800); m.r[0x400000] = std::vector<uint8_t>(0x100);
   uint64_t arr = 0x1000 + 0x40;
@@ -462,7 +483,7 @@ int main(int argc, char** argv) {
   SetEnvironmentVariableA("CRAWLER_PORT", "27999");
   g_testApi.base = (uintptr_t)GetModuleHandleA(nullptr); g_testApi.gameThreadId = GetCurrentThreadId();
   H = &g_testApi;
-  TestJsonOut(); TestAgg(); TestChunk(); TestSampler(); TestWalk(); TestDetour(); TestStats(); TestUopt(); TestMemdiff(); TestRetry(); TestPose(); TestContainers(); TestPlugRestore(); TestHwHook(); TestUeScan();
+  TestJsonOut(); TestAgg(); TestChunk(); TestSampler(); TestWalk(); TestDetour(); TestStats(); TestUopt(); TestMemdiff(); TestRetry(); TestPose(); TestContainers(); TestPlugRestore(); TestHwHook(); TestUeScan(); TestScan();
   printf("unit: %d pass, %d fail\n", g_pass, g_fail);
   if (argc > 2 && !strcmp(argv[1], "--scenario")) {
     CoreInit(&g_testApi);
