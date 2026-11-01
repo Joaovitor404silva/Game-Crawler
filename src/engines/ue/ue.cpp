@@ -491,38 +491,14 @@ static void SnapFields(uintptr_t st, uintptr_t base, uintptr_t addr, int len, co
   });
 }
 
-static std::string SafeName(const std::string& s) { std::string r; for (char c : s) r += (isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.') ? c : '_'; return r.empty() ? "snap" : r; }
-
-static void CmdSnap(const std::vector<std::string>& t, Out& o) {
-  if (t.size() < 4) { o.line("usage: snap <addr|obj+off|obj> <len|auto> <name> [type=<Class|Struct>]"); return; }
-  std::string err; uint64_t a;
-  if (!EvalAddr(t[1], a, err)) { o.line("error: " + err); return; }
-  uintptr_t st = 0; std::string tname;
-  for (size_t i = 4; i < t.size(); i++) if (t[i].rfind("type=", 0) == 0) { st = ResolveStruct(t[i].substr(5)); if (!st) { o.line("cannot resolve type " + t[i].substr(5)); return; } }
+static uintptr_t UeSnapType(uintptr_t a, const std::string& typeArg, std::string& tname, uint64_t& size, std::string& err) {
+  uintptr_t st = 0;
+  if (!typeArg.empty()) { st = ResolveStruct(typeArg); if (!st) { err = "cannot resolve type " + typeArg; return 0; } }
   if (!st && IsObj(a)) st = ClassOf(a);
-  if (st) tname = ObjName(st);
-  uint64_t len = 0; bool autoLen = t[2] == "auto" || t[2] == "0";
-  if (!autoLen && !ParseU64(t[2], len)) { o.line("error: bad length " + t[2]); return; }
-  if (autoLen) { if (!st) { o.line("error: len auto needs an object or type="); return; } len = (uint64_t)Rd<int>(st + S_SIZE); }
-  if (len == 0 || len > (1u << 20)) { o.f("error: bad length %llu (1..1048576)", len); return; }
-  std::vector<uint8_t> buf((size_t)len);
-  if (!SafeRead(buf.data(), a, buf.size())) { o.f("error: cannot read %llu bytes at 0x%llx", len, a); return; }
-  std::string hex; hex.reserve(buf.size() * 2); for (uint8_t b : buf) { char x[3]; sprintf_s(x, "%02x", b); hex += x; }
-  std::vector<std::string> fields; if (st) SnapFields(st, 0, a, (int)len, "", 1, fields);
-  SYSTEMTIME s; GetLocalTime(&s);
-  std::string name = SafeName(t[3]), dir = LogDir() + "\\snaps";
-  CreateDirectoryA(dir.c_str(), nullptr);
-  std::string base = dir + "\\" + name;
-  jo::Obj j; j.str("name", name).hex("addr", a).str("type", tname).num("len", (long long)len).str("md5", Md5Bytes(buf.data(), buf.size()));
-  if (InModule(a)) j.hex("rva", a - H->base);
-  j.str("taken", Fmt("%04d-%02d-%02dT%02d:%02d:%02d", s.wYear, s.wMonth, s.wDay, s.wHour, s.wMinute, s.wSecond)).str("hex", hex).raw("fields", jo::Arr(fields));
-  FILE* f; std::string js = j.done();
-  if (fopen_s(&f, (base + ".json").c_str(), "wb")) { o.line("error: cannot write " + base + ".json"); return; }
-  fwrite(js.data(), 1, js.size(), f); fclose(f);
-  if (!fopen_s(&f, (base + ".bin").c_str(), "wb")) { fwrite(buf.data(), 1, buf.size(), f); fclose(f); }
-  JsonSetData(jo::Obj().str("name", name).hex("addr", a).str("type", tname).num("len", (long long)len).num("fields", (long long)fields.size()).str("json", base + ".json").str("bin", base + ".bin").done());
-  o.f("snap %s 0x%llx len %llu type %s fields %zu -> %s.json (+ .bin)", name.c_str(), a, len, tname.empty() ? "-" : tname.c_str(), fields.size(), base.c_str());
+  if (st) { tname = ObjName(st); size = (uint64_t)Rd<int>(st + S_SIZE); }
+  return st;
 }
+static void UeSnapFields(uintptr_t st, uintptr_t a, int len, std::vector<std::string>& fields) { SnapFields(st, 0, a, len, "", 1, fields); }
 
 static void CmdScene(const std::vector<std::string>& t, Out& o) {
   uintptr_t pc = PlayerController(), pawn = 0, level = 0, world = 0; std::string err;
@@ -780,12 +756,11 @@ static void CmdPose(const std::vector<std::string>& t, Out& o) {
 }
 #include "ue_containers.inc"
 bool UeHandle(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o) {
-  static const char* cmds[] = { "find", "obj", "get", "set", "call", "funcs", "classes", "props", "watchprop", "unwatch", "con", "uinfo", "dumpfuncs", "dumpvtables", "dumpsdk", "dumpfieldvt", "scene", "snap", "comps", "pose", "tarray", "tset", "tmap", "layoutcheck" };
+  static const char* cmds[] = { "find", "obj", "get", "set", "call", "funcs", "classes", "props", "watchprop", "unwatch", "con", "uinfo", "dumpfuncs", "dumpvtables", "dumpsdk", "dumpfieldvt", "scene", "comps", "pose", "tarray", "tset", "tmap", "layoutcheck" };
   if (std::find_if(std::begin(cmds), std::end(cmds), [&](const char* x) { return c == x; }) == std::end(cmds)) return false;
   { std::string why; if (!EnsureUObj(why)) { o.line(why); return true; } }
   std::string err;
   if (c == "scene") { CmdScene(t, o); return true; }
-  if (c == "snap") { CmdSnap(t, o); return true; }
   if (c == "comps") { CmdComps(t, o); return true; }
   if (c == "pose") { CmdPose(t, o); return true; }
   if (c == "tarray" || c == "tset" || c == "tmap") { CmdContainer(c, t, o); return true; }
@@ -996,4 +971,4 @@ bool UeTry(std::string& why) { return EnsureUObj(why); }
 
 static bool UeDetect() { return ImageHasWide(L"++UE4") || ImageHasWide(L"++UE5") || ExeNameHas("-Win64-Shipping") || ExeNameHas("-WinGDK-Shipping"); }
 static std::string UeLabel(uintptr_t a) { return IsObj(a) ? ObjName(a) : std::string(); }
-extern const EngineBackend kUnreal = { "unreal", UeDetect, UeTry, UeReady, UeTickWatches, UeResolveObj, UeObjSize, UePropAtOffset, UeDescribeObj, UeLabel, UeHandle, UeUPropAddr };
+extern const EngineBackend kUnreal = { "unreal", UeDetect, UeTry, UeReady, UeTickWatches, UeResolveObj, UeObjSize, UePropAtOffset, UeDescribeObj, UeLabel, UeHandle, UeUPropAddr, UeSnapType, UeSnapFields };

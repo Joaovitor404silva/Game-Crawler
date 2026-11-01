@@ -18,6 +18,8 @@ struct EngineBackend {
   std::string (*label)(uintptr_t a);
   bool (*handle)(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o);
   bool (*propAddr)(const std::string& obj, const std::string& path, uintptr_t& addr, int& size, std::string& type, std::string& val, std::string& err);
+  uintptr_t (*snapType)(uintptr_t a, const std::string& typeArg, std::string& tname, uint64_t& size, std::string& err);
+  void (*snapFields)(uintptr_t type, uintptr_t a, int len, std::vector<std::string>& fields);
 };
 
 const EngineBackend* ActiveEngine();

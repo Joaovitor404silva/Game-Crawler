@@ -124,6 +124,7 @@ const OPTS = str('extra options appended verbatim: agg (count per unique stack i
 const ADDR = str('address expression: 0x7ff..., base+0x50C40C, exe+rva, [pawn+0x338]+0x10, Class::Func (names.tsv), object name');
 const tools = [
   ['status', 'Ping the dev game (pid, base, tick count, core generation) and the core build time.', S({}), async () => (await game('ping')) + '\n' + (await game('ver'))],
+  ['engine', 'Which engine backend was detected in the game (unreal, ...; none = generic commands only) and whether it is ready. Engine-specific tools (find, get, call, scene, pose, tarray, ...) need a backend.', S({}), () => game('engine')],
   ['find', 'Find UObjects by name substring, class:ExactClass or isa:BaseClass. Optional: near/r (distance filter, sorted nearest first), loc (print RootComponent.RelativeLocation), new (only the N most recently created), since (object index above N), hidden (bHidden filter), nodef (skip Default__ objects).', S({ query: str('substring | class:Name | isa:Name'), max: int('max rows (default 30)'), near: str('object (pawn, 0x..) or x,y,z; keeps objects within r cm of it'), r: int('radius cm for near (default 500)'), loc: { type: 'boolean', description: 'print location (and idx, hidden)' }, new: int('only the N highest object indexes that match'), since: int('only objects with index greater than this'), hidden: int('0 or 1: filter on bHidden'), nodef: { type: 'boolean', description: 'skip Default__ objects' } }, ['query']),
     a => cmd('find', a.query, a.max || 30, a.near ? 'near=' + a.near : '', a.r !== undefined ? 'r=' + a.r : '', a.loc ? 'loc' : '', a.new ? 'new=' + a.new : '', a.since !== undefined ? 'since=' + a.since : '', a.hidden !== undefined ? 'hidden=' + a.hidden : '', a.nodef ? 'nodef' : '')],
   ['obj', 'Dump a UObject: class chain, outer and every property with its live value.', S({ obj: OBJ }, ['obj']), a => cmd('obj', a.obj)],
@@ -204,6 +205,8 @@ async function onMessage(m) {
     if (!t) return send({ jsonrpc: '2.0', id: m.id, error: { code: -32602, message: 'unknown tool ' + (m.params && m.params.name) } });
     let text, isError = false;
     const args = m.params.arguments || {}, g = args.game, json = args.json === true;
+    const miss = (t[2].required || []).filter(k => args[k] === undefined || args[k] === null || args[k] === '');
+    if (miss.length) return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'error: missing required argument(s): ' + miss.join(', ') }], isError: true } });
     try {
       if (String(g).toLowerCase() === 'all') {
         const parts = await Promise.all(ALL_PORTS.map(port => ctx.run({ port, json }, async () => {

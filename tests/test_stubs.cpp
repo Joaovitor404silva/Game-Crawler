@@ -13,6 +13,7 @@ bool EngineTry(std::string& why) { why = "no reflection in tests"; return false;
 bool EngineReady() { return true; }
 void EngineTick() {}
 std::string EngineReport() { return "engine none"; }
+const EngineBackend* ActiveEngine() { return nullptr; }
 uintptr_t ResolveObj(const std::string&) { return 0; }
 std::string DescribeObj(uintptr_t) { return ""; }
 std::string ObjLabel(uintptr_t) { return ""; }
