@@ -109,7 +109,9 @@ static bool ParseTerm(const char*& p, uint64_t& v, std::string& err) {
     while (*p == ' ') p++; if (*p != ']') { err = "missing ]"; return false; } p++;
     if (!SafeRead(&v, a, 8)) { err = Fmt("bad read at 0x%llx", a); return false; } return true;
   }
-  std::string t; while (*p && *p != '+' && *p != '-' && *p != ']' && *p != ' ') t += *p++;
+  std::string t;
+  { const char* q = p; while (*q && *q != '+' && *q != ']' && *q != ' ' && *q != '!') q++; if (*q == '!') { t.assign(p, q + 1); p = q + 1; } }
+  while (*p && *p != '+' && *p != '-' && *p != ']' && *p != ' ') t += *p++;
   if (t == "base" || t == "exe") { v = H->base; return true; }
   if (ParseU64(t, v)) return true;
   if (t.find("::") != std::string::npos || t.rfind("sym:", 0) == 0) { uintptr_t x; if (LookupName(t.rfind("sym:", 0) == 0 ? t.substr(4) : t, x)) { v = x; return true; } }
