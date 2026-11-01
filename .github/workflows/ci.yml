@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  core:
+    name: Core build and tests
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build loader, proxy and core
+        shell: cmd
+        run: call src\build.bat
+      - name: Unit, scenario and MCP tests
+        shell: cmd
+        run: call tests\run_tests.bat
+      - name: Check JavaScript syntax
+        shell: bash
+        run: for f in crawler.js mcp/server.js src/peinfo.js tools/*.js tests/*.js plugins/*/mcp.js; do node --check "$f" || exit 1; done
+
+  plugins:
+    name: Plugin builds and tests
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build and test every plugin in plugins/
+        shell: bash
+        run: |
+          set -e
+          for d in plugins/*/; do
+            n=$(basename "$d")
+            echo "== $n"
+            cmd //c "plugins\\build_plugin.bat $n"
+            test -f "bin/plugins/$n.dll"
+            if [ -f "$d/test/build.bat" ]; then cmd //c "plugins\\$n\\test\\build.bat"; fi
+            if [ -f "$d/mcp.js" ]; then node tests/check_plugin_mcp.js "$d/mcp.js"; fi
+          done

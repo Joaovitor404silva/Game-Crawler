@@ -110,65 +110,9 @@ Results are capped at 12000 characters (`CRAWLER_MCP_CAP`).
 
 ## Plugins
 
-`plugins\<name>\*.cpp` -> `bin\plugins\<name>.dll` (`plugins\build_plugin.bat <name>`). The core polls the folder every second. On
-save it rebuilds (5-15 s) and swaps the plugin on the game thread: the old `UEPluginShutdown` runs, its hooks are removed, the
-fresh copy is loaded and `UEPluginInit` runs. A failed build keeps the old copy running.
-
-```cpp
-#include "crawler_api.h"
-static const UEApi* api;
-UE_EXPORT int UEPluginInit(const UEApi* a) { api = a; return 1; }
-UE_EXPORT void UEPluginTick() {
-  static uint64_t last; if (api->ticks() - last < 600) return; last = api->ticks();
-  char out[512]; uintptr_t pc = api->find("pc");
-  if (pc && api->call(pc, "K2_GetActorLocation", "", out, sizeof out)) api->log("pc location %s", out);
-}
-UE_EXPORT void UEPluginShutdown() {}
-```
-
-API (`plugins/crawler_api.h`):
-
-| Member | Meaning |
-|---|---|
-| `base` | Game exe base address |
-| `log(fmt, ...)` | Append to `crawler.log`, prefixed with the plugin name |
-| `addr(expr)` | Address of a names-database name, a native, or any Game Crawler expression; 0 = not found |
-| `sym(a, buf, n)` | Address -> `exe+0x.. Name+0x..` |
-| `hook` / `unhook` | Inline hook (returns 1 on success); hooks are removed automatically on unload |
-| `find(obj)` | UObject by `pawn`, `pc`, name, path or `0x` address |
-| `get` / `set` / `call` | Property as text / write a property / call a UFunction (queued to the game thread, up to 5 s) |
-| `cmd(line, out, n)` | Run any Game Crawler command |
-| `ticks()` | Game-thread pump counter |
-| `read(a, out, n)` | Fault-safe memory read (1 = ok) |
-| `sig(pattern, rip)` | Byte signature in the exe code (`"48 8B ?? ..."`); `rip` >= 0 resolves a RIP-relative operand at that offset; 0 = not found |
-| `path(rel, buf, n)` | Absolute path under the Game Crawler folder |
-| `describe(a, buf, n)` | `Class /path` of an engine object, empty if `a` is not one |
-
-Exports (all but `UEPluginInit` optional):
-
-| Export | Meaning |
-|---|---|
-| `int UEPluginInit(const UEApi*)` | Return 1 = ok. `api->version` is 2 |
-| `void UEPluginTick()` | Called on the game thread |
-| `void UEPluginShutdown()` | Stop and join any threads the plugin started |
-| `int UEPluginCommand(const char* line, char* out, int n)` | New commands: return 1 and write the reply to `out` if the line is yours, 0 otherwise. Commands Game Crawler does not know are offered to every plugin, so they work from the CLI, `raw` and MCP |
-| `const char* UEPluginHelp()` | One line listing the plugin's commands, shown by `plug list` |
-| `uintptr_t UEPluginPreCall()` / `void UEPluginCallFault(uintptr_t)` | Guard around every UFunction call Game Crawler makes: the value returned before the call is handed back if the call faults, to repair game state |
-
-Wrap risky pointer reads in `__try` / `__except` or use `read`.
-
-**MCP tools from a plugin.** `plugins\<name>\mcp.js` is loaded by the MCP server at start. It exports a function that gets the
-server helpers and returns tool rows:
-
-```js
-module.exports = ({ S, str, int, OBJ, cmd }) => [
-  ['hello', 'Say hello from the example plugin.', S({ name: str('who') }), a => cmd('hello', a.name)],
-];
-```
-
-**Plugins in their own repo.** Clone (or link) a plugin repo into `plugins\<name>`; only `plugins\example` is tracked here.
-[Anomaly Scanner](https://github.com/Joaovitor404silva/Anomaly-Scanner) is one: S.T.A.L.K.E.R. 2 quest graph, NPC census and a
-scripted player bot on top of Game Crawler.
+C++ plugins add hooks, commands, MCP tools and per-tick code, and hot reload when you save. **How to write one: [PLUGINS.md](PLUGINS.md).**
+Start from `pluginsexample`; plugin repos are cloned into `plugins<name>`, for example
+[Anomaly Scanner](https://github.com/Joaovitor404silva/Anomaly-Scanner) (S.T.A.L.K.E.R. 2).
 
 ## Names database and decompile (optional)
 
@@ -207,6 +151,12 @@ and the PE imports and exports of the exe (read from the running game, or `--exe
 cmd /c tests\run_tests.bat                 # C++ units (engine discovery on fake memory) + core scenario, MCP server and CLI against fake servers
 ```
 No game needed.
+
+## Contributing
+
+Every pull request runs CI (`.github/workflows/ci.yml`) on Windows: core build, unit, scenario and MCP tests, and the build and
+tests of every plugin in `plugins/`. A pull request is merged only when CI is green and the owner approved it. Plugin repos
+reuse `.github/workflows/plugin.yml` to test against Game Crawler (see [PLUGINS.md](PLUGINS.md#8-publish-it-in-its-own-repo)).
 
 ## Limits
 

@@ -1,0 +1,48 @@
+name: Plugin
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: Plugin folder name under Game Crawler's plugins/
+        required: true
+        type: string
+      crawler-ref:
+        description: Game Crawler branch, tag or commit to build against
+        required: false
+        type: string
+        default: main
+
+jobs:
+  plugin:
+    name: Build and test against Game Crawler
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Joaovitor404silva/Game-Crawler
+          ref: ${{ inputs.crawler-ref }}
+          path: crawler
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          path: crawler/plugins/${{ inputs.name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build plugin
+        shell: cmd
+        working-directory: crawler
+        run: call plugins\build_plugin.bat ${{ inputs.name }} && if not exist bin\plugins\${{ inputs.name }}.dll exit /b 1
+      - name: Plugin unit tests
+        shell: bash
+        working-directory: crawler
+        run: if [ -f "plugins/${{ inputs.name }}/test/build.bat" ]; then cmd //c "plugins\\${{ inputs.name }}\\test\\build.bat"; else echo "no test/build.bat"; fi
+      - name: Check MCP tools
+        shell: bash
+        working-directory: crawler
+        run: if [ -f "plugins/${{ inputs.name }}/mcp.js" ]; then node tests/check_plugin_mcp.js "plugins/${{ inputs.name }}/mcp.js"; else echo "no mcp.js"; fi
+      - name: Core tests with the plugin present
+        shell: cmd
+        working-directory: crawler
+        run: call tests\run_tests.bat
