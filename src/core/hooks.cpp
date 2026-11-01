@@ -122,7 +122,13 @@ static std::vector<void*> g_stubPages;
 static std::string ArgDesc(uint64_t v) {
   std::string n = ObjLabel(v), d = n.empty() ? "" : " (" + n + ")"; return Fmt("0x%llx%s", v, d.c_str());
 }
+static thread_local int t_inHit;
+static int HookOnHitBody(Hook* h, uint64_t* regs);
 extern "C" int HookOnHit(Hook* h, uint64_t* regs) {
+  if (t_inHit) return 0;
+  t_inHit = 1; int r = HookOnHitBody(h, regs); t_inHit = 0; return r;
+}
+static int HookOnHitBody(Hook* h, uint64_t* regs) {
   if (h->o.fl.any() && !h->o.fl.match(regs[3], regs[2], regs[1], regs[0])) { InterlockedIncrement64(&h->filtered); return 0; }
   LONG64 n = InterlockedIncrement64(&h->hits);
   if (h->tab) {

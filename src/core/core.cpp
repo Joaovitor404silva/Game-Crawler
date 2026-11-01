@@ -114,6 +114,7 @@ static bool ParseTerm(const char*& p, uint64_t& v, std::string& err) {
   while (*p && *p != '+' && *p != '-' && *p != ']' && *p != ' ') t += *p++;
   if (t == "base" || t == "exe") { v = H->base; return true; }
   if (ParseU64(t, v)) return true;
+  if (t.find('!') == std::string::npos && t.find('.') != std::string::npos) { HMODULE m = GetModuleHandleA(t.c_str()); if (m) { v = (uint64_t)(uintptr_t)m; return true; } }
   if (t.find("::") != std::string::npos || t.rfind("sym:", 0) == 0) { uintptr_t x; if (LookupName(t.rfind("sym:", 0) == 0 ? t.substr(4) : t, x)) { v = x; return true; } }
   uintptr_t o = ResolveObjCached(t); if (o) { v = o; return true; }
   { uintptr_t x; if (LookupName(t, x)) { v = x; return true; } }

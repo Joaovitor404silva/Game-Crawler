@@ -23,6 +23,7 @@ uint8_t g_keys[256];
 uint8_t g_btn[5];
 bool g_cursor = false;
 bool g_focus = false;
+std::atomic<bool> g_diKbSeen{ false };
 LONG g_cx = 0, g_cy = 0;
 LONG g_diDx = 0, g_diDy = 0, g_diWheel = 0;
 std::deque<DIDEVICEOBJECTDATA> g_diKb, g_diMouse;
@@ -160,7 +161,7 @@ HRESULT WINAPI HkGdsW2(void* dev, DWORD cb, LPVOID data) { return Gds(o_gdsW2, d
 HRESULT WINAPI HkGdsA2(void* dev, DWORD cb, LPVOID data) { return Gds(o_gdsA2, dev, cb, data); }
 
 void AppendData(void* dev, DWORD cbObj, LPDIDEVICEOBJECTDATA rg, LPDWORD inout, DWORD cap) {
-  int t = DevType(dev); std::lock_guard<std::mutex> l(g_m);
+  int t = DevType(dev); if (t == DI8DEVTYPE_KEYBOARD) g_diKbSeen = true; std::lock_guard<std::mutex> l(g_m);
   auto* q = t == DI8DEVTYPE_KEYBOARD ? &g_diKb : t == DI8DEVTYPE_MOUSE ? &g_diMouse : nullptr; if (!q) return;
   while (*inout < cap && !q->empty()) {
     DIDEVICEOBJECTDATA d = q->front(); q->pop_front();
@@ -275,7 +276,7 @@ void KeyEvent(int vk, bool down, unsigned via, bool msg = true) {
     ri.data.keyboard.MakeCode = (USHORT)scan; ri.data.keyboard.Flags = (USHORT)((down ? RI_KEY_MAKE : RI_KEY_BREAK) | (bot::IsExtended(vk) ? RI_KEY_E0 : 0));
     ri.data.keyboard.VKey = (USHORT)gv; ri.data.keyboard.Message = down ? WM_KEYDOWN : WM_KEYUP; PostRaw(ri);
   }
-  if ((via & bot::MSG) && msg) {
+  if ((via & bot::MSG) && msg && !(g_diKbSeen && (via & bot::DI))) {
     bool sys = Down(VK_MENU) && gv != VK_MENU;
     Post(down ? (sys ? WM_SYSKEYDOWN : WM_KEYDOWN) : (sys ? WM_SYSKEYUP : WM_KEYUP), gv, bot::KeyLParam(scan, vk, down));
   }
@@ -380,7 +381,7 @@ void Status(Out& o) {
   HWND h = Wnd(); RECT r{}; if (h) GetClientRect(h, &r); wchar_t title[128] = {}; if (h) GetWindowTextW(h, title, 127);
   unsigned v = g_via;
   o.f("bot window 0x%llx \"%s\" client %ldx%ld foreground=%s", (unsigned long long)(uintptr_t)h, Narrow(title).c_str(), r.right, r.bottom, h && RealFg() == h ? "yes" : "no");
-  o.f("focus spoof %s", g_focus ? "on" : "off");
+  o.f("focus spoof %s  keyboard %s", g_focus ? "on" : "off", g_diKbSeen ? "DirectInput (key taps skip WM_KEYDOWN)" : "messages/poll/raw");
   o.f("via %s%s%s%s  cursor %s", v & bot::MSG ? "msg " : "", v & bot::POLL ? "poll " : "", v & bot::RAW ? "raw " : "", v & bot::DI ? "di" : "", g_cursor ? Fmt("on at %ld,%ld", g_cx, g_cy).c_str() : "off (real cursor)");
   std::string held; for (int i = 1; i < 256; i++) if (g_keys[i]) held += Fmt(" 0x%02x", i); for (int i = 0; i < 5; i++) if (g_btn[i]) held += Fmt(" btn%d", i);
   o.f("held:%s", held.empty() ? " none" : held.c_str());
@@ -415,19 +416,22 @@ void ShutdownBot() {
   if (g_wake) { CloseHandle(g_wake); g_wake = nullptr; }
 }
 
+void Activate(bool on) {
+  HWND h = Wnd(); if (!h) return;
+  PostMessageW(h, WM_ACTIVATEAPP, on ? TRUE : FALSE, 0); PostMessageW(h, WM_NCACTIVATE, on ? TRUE : FALSE, 0);
+  PostMessageW(h, WM_ACTIVATE, on ? WA_ACTIVE : WA_INACTIVE, 0); PostMessageW(h, on ? WM_SETFOCUS : WM_KILLFOCUS, 0, 0);
+}
+
 bool HandleBot(const std::string& c, const std::vector<std::string>& t, Out& o) {
   if (c != "bot") return false;
   if (t.size() < 2) { o.line(kUsage); return true; }
   std::string a = Lower(t[1]);
   Install();
+  if (g_focus && Lower(t[1]) != "focus" && Wnd() && RealFg() != Wnd()) Activate(true);
   if (a == "status") { Status(o); return true; }
   if (a == "via") { unsigned v = t.size() > 2 ? bot::ParseVia(Lower(t[2])) : 0; if (!v) { o.line("usage: bot via <msg,poll,raw,di|all>"); return true; } g_via = v; Status(o); return true; }
   if (a == "focus") {
-    bool on = t.size() < 3 || Lower(t[2]) != "off"; HWND h = Wnd(); g_focus = on;
-    if (h) {
-      PostMessageW(h, WM_ACTIVATEAPP, on ? TRUE : FALSE, 0); PostMessageW(h, WM_NCACTIVATE, on ? TRUE : FALSE, 0);
-      PostMessageW(h, WM_ACTIVATE, on ? WA_ACTIVE : WA_INACTIVE, 0); PostMessageW(h, on ? WM_SETFOCUS : WM_KILLFOCUS, 0, 0);
-    }
+    bool on = t.size() < 3 || Lower(t[2]) != "off"; g_focus = on; Activate(on);
     o.f("bot focus %s (game believes it is the foreground window)", on ? "on" : "off"); return true;
   }
   if (a == "cursor") { std::lock_guard<std::mutex> l(g_m); g_cursor = false; o.line("bot cursor off (game sees the real cursor)"); return true; }
