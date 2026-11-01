@@ -125,6 +125,8 @@ jobs:
 
 It builds the plugin, runs `test\build.bat`, checks `mcp.js` and runs the Game Crawler tests with your plugin in place.
 
+To get it listed as an official plugin, see [OFFICIAL_PLUGINS.md](OFFICIAL_PLUGINS.md).
+
 ## API reference
 
 `plugins/crawler_api.h`, `api->version` 2:

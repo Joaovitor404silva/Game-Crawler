@@ -112,8 +112,9 @@ Results are capped at 12000 characters (`CRAWLER_MCP_CAP`).
 ## Plugins
 
 C++ plugins add hooks, commands, MCP tools and per-tick code, and hot reload when you save. **How to write one: [PLUGINS.md](PLUGINS.md).**
-Start from `pluginsexample`; plugin repos are cloned into `plugins<name>`, for example
-[Anomaly Scanner](https://github.com/Joaovitor404silva/Anomaly-Scanner) (S.T.A.L.K.E.R. 2).
+Start from `plugins\example`; plugin repos are cloned into `plugins\<name>`. Approved plugins, such as
+[Anomaly Scanner](https://github.com/Joaovitor404silva/Anomaly-Scanner) (S.T.A.L.K.E.R. 2), and how to get yours approved:
+**[OFFICIAL_PLUGINS.md](OFFICIAL_PLUGINS.md)**.
 
 ## Names database and decompile (optional)
 
