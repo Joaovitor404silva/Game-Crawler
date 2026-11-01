@@ -1,7 +1,7 @@
 #include "core.h"
 #include "home.h"
 #include "plug_restore.h"
-#include "../plugins/s2dev_api.h"
+#include "../plugins/uescan_api.h"
 #include "minhook/include/MinHook.h"
 #include <map>
 #include <mutex>
@@ -13,8 +13,8 @@
 extern "C" void CoreHandle(const char* line, EmitFn emit, void* ctx);
 bool LookupName(const std::string& n, uintptr_t& a);
 
-static const std::string& PDirS() { static std::string p = S2Path("plugins"); return p; }
-static const std::string& ODirS() { static std::string p = S2Path("bin\\plugins"); return p; }
+static const std::string& PDirS() { static std::string p = UEPath("plugins"); return p; }
+static const std::string& ODirS() { static std::string p = UEPath("bin\\plugins"); return p; }
 #define PDIR (PDirS().c_str())
 #define ODIR (ODirS().c_str())
 
@@ -75,7 +75,7 @@ static int ApiCall(uintptr_t o, const char* fn, const char* args, char* out, int
   std::string r = RunCmd(Fmt("call 0x%llx %s %s", (unsigned long long)o, fn, args ? args : "")); Copy(r, out, n); return r.rfind("ok", 0) == 0 ? 1 : 0;
 }
 static uint64_t ApiTicks() { return H->tickCount; }
-static S2Api g_api = { 1, 0, ApiLog, ApiAddr, ApiSym, ApiHook, ApiUnhook, ApiFind, ApiGet, ApiSet, ApiCall, ApiCmd, ApiTicks };
+static UEApi g_api = { 1, 0, ApiLog, ApiAddr, ApiSym, ApiHook, ApiUnhook, ApiFind, ApiGet, ApiSet, ApiCall, ApiCmd, ApiTicks };
 
 static uint64_t SrcStamp(const std::string& name) {
   uint64_t best = 0; WIN32_FIND_DATAA fd;
@@ -94,7 +94,7 @@ static std::vector<std::string> ListPluginDirs() {
   do { if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && fd.cFileName[0] != '.') r.push_back(fd.cFileName); } while (FindNextFileA(h, &fd));
   FindClose(h); return r;
 }
-static bool SafeInitPlug(int (*f)(const S2Api*), int& rc) { __try { rc = f(&g_api); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
+static bool SafeInitPlug(int (*f)(const UEApi*), int& rc) { __try { rc = f(&g_api); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
 static void SafeVoid(void (*f)()) { __try { f(); } __except (EXCEPTION_EXECUTE_HANDLER) {} }
 
 static int PluginThreads(HMODULE m) {
@@ -121,7 +121,7 @@ static void UnloadLocked(Plugin& p) {
   }
   Sleep(n ? 50 : 0);
   int alive = 0; for (int i = 0; i < 40 && (alive = PluginThreads(p.mod)) > 0; i++) Sleep(50);
-  if (alive) { LOG("[plug %s] NOT freed: %d thread(s) started by it are still running (stop them in S2PluginShutdown); module leaked", p.name.c_str(), alive); p.mod = nullptr; return; }
+  if (alive) { LOG("[plug %s] NOT freed: %d thread(s) started by it are still running (stop them in UEPluginShutdown); module leaked", p.name.c_str(), alive); p.mod = nullptr; return; }
   FreeLibrary(p.mod); p.mod = nullptr; DeleteFileA(p.shadow.c_str());
   LOG("[plug %s] unloaded (%d hooks removed)", p.name.c_str(), n);
 }
@@ -134,12 +134,12 @@ static std::string LoadLocked(Plugin& p) {
   if (!CopyFileA(dll.c_str(), p.shadow.c_str(), FALSE)) { p.state = "copy failed"; return p.name + ": copy failed"; }
   p.mod = LoadLibraryA(p.shadow.c_str());
   if (!p.mod) { p.state = Fmt("LoadLibrary failed %lu", GetLastError()); return p.name + ": " + p.state; }
-  auto init = (int (*)(const S2Api*))GetProcAddress(p.mod, "S2PluginInit");
-  p.shutdown = (void (*)())GetProcAddress(p.mod, "S2PluginShutdown");
-  auto tick = (void (*)())GetProcAddress(p.mod, "S2PluginTick");
+  auto init = (int (*)(const UEApi*))GetProcAddress(p.mod, "UEPluginInit");
+  p.shutdown = (void (*)())GetProcAddress(p.mod, "UEPluginShutdown");
+  auto tick = (void (*)())GetProcAddress(p.mod, "UEPluginTick");
   int rc = 0;
   g_cur = p.name.c_str(); bool iok = init && SafeInitPlug(init, rc); g_cur = nullptr;
-  if (!iok || rc != 1) { p.state = init ? Fmt("init failed rc=%d", rc) : "no S2PluginInit"; UnloadLocked(p); return p.name + ": " + p.state; }
+  if (!iok || rc != 1) { p.state = init ? Fmt("init failed rc=%d", rc) : "no UEPluginInit"; UnloadLocked(p); return p.name + ": " + p.state; }
   p.tick = tick; p.state = Fmt("loaded gen %d", p.gen); p.tickExc = 0;
   LOG("[plug %s] loaded gen %d", p.name.c_str(), p.gen);
   return p.name + ": " + p.state;
@@ -184,9 +184,9 @@ static DWORD WINAPI WatchThread(LPVOID) {
 
 void InitPlugins() {
   g_api.base = H->base; g_stop = false;
-  char rs[1024] = {}; GetEnvironmentVariableA("ANOMALY_PLUG_RESTORE", rs, sizeof rs);
+  char rs[1024] = {}; GetEnvironmentVariableA("UESCAN_PLUG_RESTORE", rs, sizeof rs);
   std::vector<std::string> want = plr::Split(rs);
-  char np[8]; bool noplug = GetEnvironmentVariableA("ANOMALY_NOPLUG", np, sizeof np) && np[0] == '1';
+  char np[8]; bool noplug = GetEnvironmentVariableA("UESCAN_NOPLUG", np, sizeof np) && np[0] == '1';
   if (noplug) g_watchOn = false;
   else {
     for (auto& n : ListPluginDirs()) {
@@ -216,7 +216,7 @@ void ShutdownPlugins() {
   std::lock_guard<std::recursive_mutex> l(g_pm);
   std::vector<std::string> was;
   for (auto& kv : g_plugs) if (kv.second.mod) was.push_back(kv.first);
-  SetEnvironmentVariableA("ANOMALY_PLUG_RESTORE", plr::Join(was).c_str());
+  SetEnvironmentVariableA("UESCAN_PLUG_RESTORE", plr::Join(was).c_str());
   for (auto& kv : g_plugs) UnloadLocked(kv.second);
   g_plugs.clear();
 }

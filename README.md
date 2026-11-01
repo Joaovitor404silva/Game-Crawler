@@ -22,13 +22,13 @@ and drive the running game.
 
 | Piece | Role |
 |---|---|
-| `src/patch_exe.js` | Copies the game exe and adds a `.s2dev` section with a rebuilt import directory, so the game loads `S2Dev.dll!S2DevInit` at start. It strips the signature, recomputes the checksum, verifies the result, and refuses to write into `steamapps`. |
+| `src/patch_exe.js` | Copies the game exe and adds a `.s2dev` section with a rebuilt import directory, so the game loads `UEScanner.dll!UEScannerInit` at start. It strips the signature, recomputes the checksum, verifies the result, and refuses to write into `steamapps`. |
 | `src/make_devroot.ps1` | Builds the dev folder (default `C:\S2DevRoot`): junctions and hardlinks to the Steam install, the patched exe, no UE4SS, no mod paks. Idempotent. |
-| `S2Dev.dll` (`src/loader.cpp`) | Loader: log, TCP server on `127.0.0.1:27060`, `GameEngine::Tick` hook (game-thread pump), hot reload of the core. |
-| `S2DevCore.dll` (`src/core.cpp`, `ue.cpp`, `hooks.cpp`, `probe.cpp`, `plugins.cpp`) | Every command. Loaded from a shadow copy, so it can be rebuilt and reloaded while the game runs. |
-| `anomaly.js` | CLI client. |
+| `UEScanner.dll` (`src/loader.cpp`) | Loader: log, TCP server on `127.0.0.1:27060`, `GameEngine::Tick` hook (game-thread pump), hot reload of the core. |
+| `UEScannerCore.dll` (`src/core.cpp`, `ue.cpp`, `hooks.cpp`, `probe.cpp`, `plugins.cpp`) | Every command. Loaded from a shadow copy, so it can be rebuilt and reloaded while the game runs. |
+| `uescan.js` | CLI client. |
 | `mcp/server.js` | MCP server (stdio, JSON-RPC 2.0, no dependencies). |
-| `plugins/` | Plugin API (`s2dev_api.h`), `example` (hooks one game function) and `nbot` (a scripted player bot). |
+| `plugins/` | Plugin API (`uescan_api.h`), `example` (hooks one game function) and `nbot` (a scripted player bot). |
 
 ## Requirements
 
@@ -42,24 +42,24 @@ and drive the running game.
 ```powershell
 git clone --recursive <this repo>        # MinHook is a submodule (src/minhook)
 cd Anomaly-Scanner
-cmd /c src\build.bat                       # -> bin\S2Dev.dll, bin\S2DevCore.dll
+cmd /c src\build.bat                       # -> bin\UEScanner.dll, bin\UEScannerCore.dll
 powershell -File src\make_devroot.ps1      # once; -Game <game folder> -DevRoot <dev folder> to override
 powershell -File launch.ps1                # starts the dev game windowed, saves in Saved_dev
-node anomaly.js ping                         # -> pong pid=... core=loaded
+node uescan.js ping                         # -> pong pid=... core=loaded
 ```
 
-`launch.ps1` sets `ANOMALY_HOME` to this folder, so the DLLs find `bin\`, `plugins\`, the logs and the optional names database
+`launch.ps1` sets `UESCAN_HOME` to this folder, so the DLLs find `bin\`, `plugins\`, the logs and the optional names database
 here. It refuses to start a second dev game (`-Force` launches alongside other STALKER 2 instances).
 
 ### Register the MCP server
 
 ```powershell
-claude mcp add anomaly-scanner -- node <path>\Anomaly-Scanner\mcp\server.js
+claude mcp add ue-scanner -- node <path>\Anomaly-Scanner\mcp\server.js
 ```
 
 ## CLI
 
-`node anomaly.js [--json] [--port N] <command>`, `-i` interactive, `-f file` script.
+`node uescan.js [--json] [--port N] <command>`, `-i` interactive, `-f file` script.
 
 ```text
 ping
@@ -92,30 +92,30 @@ bpc, bps, hits, watchw, agg, scene, snap, sample, npcs, uid, comps, pose, quest,
 batch, mark, watch, unwatch, plugin, con, log, reload_core, raw`
 
 Every tool takes an optional `game` (port or alias) to target one of several dev games, and `all` runs it on every port.
-Results are capped at 12000 characters (`ANOMALY_MCP_CAP`).
+Results are capped at 12000 characters (`UESCAN_MCP_CAP`).
 
 ## Plugins
 
 `plugins\<name>\*.cpp` -> `bin\plugins\<name>.dll` (`plugins\build_plugin.bat <name>`). The core polls the folder every second. On
-save it rebuilds (5-15 s) and swaps the plugin on the game thread: the old `S2PluginShutdown` runs, its hooks are removed, the
-fresh copy is loaded and `S2PluginInit` runs. A failed build keeps the old copy running.
+save it rebuilds (5-15 s) and swaps the plugin on the game thread: the old `UEPluginShutdown` runs, its hooks are removed, the
+fresh copy is loaded and `UEPluginInit` runs. A failed build keeps the old copy running.
 
 ```cpp
-#include "s2dev_api.h"
-static const S2Api* api;
+#include "uescan_api.h"
+static const UEApi* api;
 typedef bool(__fastcall* Fn)(void*); static Fn orig;
 static bool __fastcall Detour(void* self) { return true; }
-S2_EXPORT int S2PluginInit(const S2Api* a) { api = a; return api->hook(api->addr("Agent::IsChangingWeapon"), (void*)Detour, (void**)&orig); }
-S2_EXPORT void S2PluginTick() {}
-S2_EXPORT void S2PluginShutdown() {}
+UE_EXPORT int UEPluginInit(const UEApi* a) { api = a; return api->hook(api->addr("Agent::IsChangingWeapon"), (void*)Detour, (void**)&orig); }
+UE_EXPORT void UEPluginTick() {}
+UE_EXPORT void UEPluginShutdown() {}
 ```
 
-API (`plugins/s2dev_api.h`, version 1):
+API (`plugins/uescan_api.h`, version 1):
 
 | Member | Meaning |
 |---|---|
 | `base` | Game exe base address |
-| `log(fmt, ...)` | Append to `s2dev.log`, prefixed with the plugin name |
+| `log(fmt, ...)` | Append to `uescan.log`, prefixed with the plugin name |
 | `addr(expr)` | Address of a names-database name (`Agent::IsChangingWeapon`), a native, or any S2Dev expression; 0 = not found |
 | `sym(a, buf, n)` | Address -> `exe+0x.. Name+0x..` |
 | `hook` / `unhook` | Inline hook (returns 1 on success); hooks are removed automatically on unload |
@@ -124,11 +124,11 @@ API (`plugins/s2dev_api.h`, version 1):
 | `cmd(line, out, n)` | Run any S2Dev command |
 | `ticks()` | Engine tick counter |
 
-Exports: `S2PluginInit` (required, return 1 = ok), `S2PluginTick` (optional, game thread, every tick), `S2PluginShutdown`
-(optional). A plugin that starts threads must stop and join them in `S2PluginShutdown`. Wrap risky pointer reads in
+Exports: `UEPluginInit` (required, return 1 = ok), `UEPluginTick` (optional, game thread, every tick), `UEPluginShutdown`
+(optional). A plugin that starts threads must stop and join them in `UEPluginShutdown`. Wrap risky pointer reads in
 `__try` / `__except`.
 
-`nbot` is a scripted player bot (movement, scenes, quest goals) driven through files in `bench\io\<port>`. Set `ANOMALY_NBOT=0`
+`nbot` is a scripted player bot (movement, scenes, quest goals) driven through files in `bench\io\<port>`. Set `UESCAN_NBOT=0`
 to keep it inert.
 
 ## Names database and decompile (optional)
@@ -154,16 +154,16 @@ must be rerun after a game update.
 
 | Variable | Default | Used for |
 |---|---|---|
-| `ANOMALY_HOME` | `C:\s2dev` (set by `launch.ps1`) | Root for `bin\`, `plugins\`, logs, `names\`, `sdk\`, `bench\` |
-| `ANOMALY_PORT` | `27060` | TCP port of the dev game (one per game when several run) |
-| `ANOMALY_LOGDIR` | `ANOMALY_HOME` | Log folder (`s2dev.log`, `s2dev_<port>.log`) |
-| `ANOMALY_CORE` | `bin\S2DevCore.dll` | Core DLL to load (staged builds) |
-| `ANOMALY_NAMES` | `names\names.tsv` | Names database |
-| `ANOMALY_NATIVES` | `names\natives_impl.tsv` | Native exec -> impl table |
-| `ANOMALY_DECOMP` | `decomp` | Decompile dump folder (MCP `decomp`) |
-| `ANOMALY_SDK` | `sdk` | Per-class SDK tables for `layoutcheck` |
-| `ANOMALY_NBOT` | `1` | `0` disables the nbot plugin |
-| `ANOMALY_TIMEOUT`, `ANOMALY_MCP_CAP`, `ANOMALY_ALL_PORTS` | | CLI/MCP timeout, MCP result cap, port list for `game=all` |
+| `UESCAN_HOME` | `C:\s2dev` (set by `launch.ps1`) | Root for `bin\`, `plugins\`, logs, `names\`, `sdk\`, `bench\` |
+| `UESCAN_PORT` | `27060` | TCP port of the dev game (one per game when several run) |
+| `UESCAN_LOGDIR` | `UESCAN_HOME` | Log folder (`uescan.log`, `uescan_<port>.log`) |
+| `UESCAN_CORE` | `bin\UEScannerCore.dll` | Core DLL to load (staged builds) |
+| `UESCAN_NAMES` | `names\names.tsv` | Names database |
+| `UESCAN_NATIVES` | `names\natives_impl.tsv` | Native exec -> impl table |
+| `UESCAN_DECOMP` | `decomp` | Decompile dump folder (MCP `decomp`) |
+| `UESCAN_SDK` | `sdk` | Per-class SDK tables for `layoutcheck` |
+| `UESCAN_NBOT` | `1` | `0` disables the nbot plugin |
+| `UESCAN_TIMEOUT`, `UESCAN_MCP_CAP`, `UESCAN_ALL_PORTS` | | CLI/MCP timeout, MCP result cap, port list for `game=all` |
 
 ## Tests
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 const net = require('net'), readline = require('readline'), fs = require('fs');
 const GAMES = { B: 27060, A: 27061, D: 27062, C: 27063, E: 27064 };
-let PORT = +(process.env.ANOMALY_PORT || 27060), TIMEOUT = +(process.env.ANOMALY_TIMEOUT || 30000), JSONMODE = false;
+let PORT = +(process.env.UESCAN_PORT || 27060), TIMEOUT = +(process.env.UESCAN_TIMEOUT || 30000), JSONMODE = false;
 const argv = process.argv.slice(2);
 while (argv.length && /^--/.test(argv[0])) {
   const o = argv.shift();
@@ -33,9 +33,9 @@ function send(sock, line) {
 (async () => {
   const a = argv;
   let sock;
-  try { sock = await connect(); } catch (e) { console.error('cannot connect to S2Dev on port ' + PORT + ': ' + e.message); process.exit(1); }
+  try { sock = await connect(); } catch (e) { console.error('cannot connect to UE Scanner on port ' + PORT + ': ' + e.message); process.exit(1); }
   if (a[0] === '-i') {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 's2dev> ' });
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'uescan> ' });
     rl.prompt();
     for await (const line of rl) {
       if (line.trim() === 'quit' || line.trim() === 'exit') break;

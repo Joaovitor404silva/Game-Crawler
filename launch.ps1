@@ -6,8 +6,8 @@ $dev = $run | Where-Object { $_.ExecutablePath -like "$DevRoot\*" }
 if ($dev) { "dev game already running pid=$($dev.ProcessId)"; exit 1 }
 if ($run -and -not $Force) { "other STALKER 2 games running: $($run | Out-String) use -Force to launch alongside"; exit 2 }
 if ((Get-Item $exe).LinkType) { throw 'dev exe is a link' }
-if (-not (Test-Path "$PSScriptRoot\bin\S2Dev.dll")) { "build first: src\build.bat"; exit 4 }
-Copy-Item "$PSScriptRoot\bin\S2Dev.dll" "$DevRoot\Stalker2\Binaries\Win64\S2Dev.dll" -Force
-$env:ANOMALY_HOME = $PSScriptRoot
+if (-not (Test-Path "$PSScriptRoot\bin\UEScanner.dll")) { "build first: src\build.bat"; exit 4 }
+Copy-Item "$PSScriptRoot\bin\UEScanner.dll" "$DevRoot\Stalker2\Binaries\Win64\UEScanner.dll" -Force
+$env:UESCAN_HOME = $PSScriptRoot
 $p = Start-Process -FilePath $exe -ArgumentList '-windowed','-ResX=1280','-ResY=720','-NoWarmupFailMessage','-saveddirsuffix=dev' -PassThru
 "launched pid=$($p.Id)"

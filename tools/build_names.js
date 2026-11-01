@@ -2,9 +2,9 @@ const fs = require('fs'), path = require('path'), cp = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const args = process.argv.slice(2), opt = {};
 for (let i = 0; i < args.length; i++) { const a = args[i]; if (a === '--offline') opt.offline = true; else if (/^--(exe|ue4ss|dir|out|port)$/.test(a)) opt[a.slice(2)] = args[++i]; else { console.error('usage: node tools/build_names.js [--offline] [--exe <game exe>] [--ue4ss <UE4SS.log>] [--dir <raw dir>] [--out <names.tsv>] [--port N]'); process.exit(2); } }
-const HOME = process.env.ANOMALY_HOME || ROOT;
+const HOME = process.env.UESCAN_HOME || ROOT;
 const D = path.resolve(opt.dir || path.join(HOME, 'names'));
-const OUT = path.resolve(opt.out || process.env.ANOMALY_NAMES || path.join(D, 'names.tsv'));
+const OUT = path.resolve(opt.out || process.env.UESCAN_NAMES || path.join(D, 'names.tsv'));
 const EXE = opt.exe || 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\S.T.A.L.K.E.R. 2 Heart of Chornobyl\\Stalker2\\Binaries\\Win64\\Stalker2-Win64-Shipping.exe';
 if (!fs.existsSync(EXE)) { console.error('game exe not found: ' + EXE + ' (use --exe)'); process.exit(2); }
 fs.mkdirSync(D, { recursive: true });
@@ -24,7 +24,7 @@ const TEXT_BEG = text.va, TEXT_END = text.va + text.vs;
 const inText = r => r >= TEXT_BEG && r < TEXT_END;
 
 function s2(cmd) {
-  const a = [path.join(ROOT, 'anomaly.js'), '--timeout', '600000']; if (opt.port) a.push('--port', opt.port);
+  const a = [path.join(ROOT, 'uescan.js'), '--timeout', '600000']; if (opt.port) a.push('--port', opt.port);
   const r = cp.spawnSync(process.execPath, a.concat(cmd), { encoding: 'utf8' });
   const o = (r.stdout || '') + (r.stderr || '');
   if (r.status !== 0 || /^error|cannot/im.test(o)) { console.error(cmd.join(' ') + ': ' + o.trim()); process.exit(1); }
@@ -93,7 +93,7 @@ for (const [ow, fn, , fl, r] of uf) {
   if (execCount.get(v) > 1) continue;
   if (!(hex(fl) & 0x400)) continue;
   execName.set(v, [ow, fn]);
-  add(v, 'ufunc_exec', `${ow}::exec${fn}`, 'S2Dev dumpfuncs', 80);
+  add(v, 'ufunc_exec', `${ow}::exec${fn}`, 'UE Scanner dumpfuncs', 80);
 }
 {
   const ec = tsv(raw('exec_callees.tsv')).map(([e, , s]) => [hex(e), (s || '').split(',').filter(x => x.startsWith('C:')).map(x => hex(x.slice(2)))]);
@@ -105,7 +105,7 @@ for (const [ow, fn, , fl, r] of uf) {
   for (const [ev, iv] of impls) {
     if (implUsers.get(iv).size > 1 || !inText(iv) || iv === ev) continue;
     const en = execName.get(ev);
-    if (en) add(iv, 'ufunc_impl', `${en[0]}::${en[1]}`, 'S2Dev callees+dumpfuncs', 75);
+    if (en) add(iv, 'ufunc_impl', `${en[0]}::${en[1]}`, 'UE Scanner callees+dumpfuncs', 75);
   }
 }
 
@@ -129,7 +129,7 @@ for (const x of vt) {
   if (vtSeen.has(x.v)) continue; vtSeen.add(x.v);
   const sup = byName.get(x.s);
   if (x.meta !== 'Class' && sup && sup.v === x.v) continue;
-  add(x.v, 'vtable', `${x.c}::vftable`, 'S2Dev dumpvtables', 70);
+  add(x.v, 'vtable', `${x.c}::vftable`, 'UE Scanner dumpvtables', 70);
   const d = depth(x);
   x.slots.slice(0, x.cap).forEach((f, i) => {
     if (sup && sup.cap > i && sup.slots[i] === f) return;
@@ -141,7 +141,7 @@ for (const x of vt) {
 }
 for (const [f, cands] of vfCand) {
   cands.sort((a, b) => (a.tail - b.tail) || (a.d - b.d)); const c0 = cands[0];
-  add(f, 'vfunc', c0.name, 'S2Dev dumpvtables' + (cands.length > 1 ? ` (shared x${cands.length})` : '') + (c0.tail ? ' (leaf tail, unverified)' : ''), c0.tail ? 45 : cands.length > 4 ? 50 : 60);
+  add(f, 'vfunc', c0.name, 'UE Scanner dumpvtables' + (cands.length > 1 ? ` (shared x${cands.length})` : '') + (c0.tail ? ' (leaf tail, unverified)' : ''), c0.tail ? 45 : cands.length > 4 ? 50 : 60);
 }
 
 {
@@ -151,7 +151,7 @@ for (const [f, cands] of vfCand) {
     if (!cand.has(f)) cand.set(f, []); cand.get(f).push({ c: x.c, d: depth(x), o });
     if (o === 0xb0) ctorOf.set(f, x.c);
   }
-  for (const [f, cs] of cand) { cs.sort((a, b) => a.d - b.d); add(f, 'uclass_fn', cs[0].c + '::' + what[cs[0].o], 'S2Dev dumpvtables UClass+0x' + cs[0].o.toString(16) + (cs.length > 1 ? ' (shared x' + cs.length + ')' : ''), 55); }
+  for (const [f, cs] of cand) { cs.sort((a, b) => a.d - b.d); add(f, 'uclass_fn', cs[0].c + '::' + what[cs[0].o], 'UE Scanner dumpvtables UClass+0x' + cs[0].o.toString(16) + (cs.length > 1 ? ' (shared x' + cs.length + ')' : ''), 55); }
   const ctorUse = new Map();
   const ctorRows = tsv(raw('ctor_callees.tsv')).filter(r => r[2] && r[2].startsWith('J:') && (cand.get(hex(r[0])) || []).length === 1);
   for (const r of ctorRows) { const t = hex(r[2].split(',')[0].slice(2)); ctorUse.set(t, (ctorUse.get(t) || 0) + 1); }
@@ -168,14 +168,14 @@ for (const [f, cands] of vfCand) {
   const minSib = {}; for (const x of uniq.values()) minSib[x.s] = Math.min(minSib[x.s] || 1e9, x.n);
   const at = new Map();
   for (const x of uniq.values()) {
-    add(x.v, 'vtable', x.c + '::vftable', 'S2Dev dumpfieldvt', 70);
+    add(x.v, 'vtable', x.c + '::vftable', 'UE Scanner dumpfieldvt', 70);
     x.slots.slice(0, minSib[x.s]).forEach((f, i) => { const k = i + ':' + f; if (!at.has(k)) at.set(k, []); at.get(k).push(x.c); });
   }
   for (const [k, cls] of at) {
     const [i, f] = k.split(':').map(Number); noteSlot(f, i);
     let lca = cls[0]; if (cls.length > 1) { const sets = cls.map(c => chain(c)); lca = sets[0].find(a => sets.every(ch => ch.includes(a))) || 'FField'; }
     const ch = chain(lca); let nm = null; for (let j = ch.length - 1; j >= 0 && !nm; j--) nm = (slotNames[ch[j]] || {})[i] || null;
-    add(f, 'vfunc', lca + '::' + (nm || 'vf_' + i), 'S2Dev dumpfieldvt' + (cls.length > 1 ? ' (shared x' + cls.length + ')' : ''), 58);
+    add(f, 'vfunc', lca + '::' + (nm || 'vf_' + i), 'UE Scanner dumpfieldvt' + (cls.length > 1 ? ' (shared x' + cls.length + ')' : ''), 58);
   }
 }
 

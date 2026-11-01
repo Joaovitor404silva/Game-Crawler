@@ -5,7 +5,6 @@
 #include "sig.h"
 #include "ue_opts.h"
 #include "pose.h"
-#include "quest.h"
 #include "containers.h"
 #include "retry.h"
 #include <unordered_map>
@@ -299,9 +298,7 @@ static std::string CallFunc(uintptr_t obj, const std::string& fname, const std::
 
 struct Watch { int id; uintptr_t obj, prop, addr; std::string label, last; };
 static std::mutex g_wm; static std::vector<Watch> g_watches; static int g_watchId;
-void QuestTick();
 void TickWatches() {
-  QuestTick();
   std::lock_guard<std::mutex> l(g_wm);
   for (auto& w : g_watches) { std::string v = ValueStr(w.prop, w.addr, 0, nullptr, ""); if (v != w.last) { LOG("watch %d %s: %s -> %s (tick %llu)", w.id, w.label.c_str(), w.last.c_str(), v.c_str(), H->tickCount); w.last = v; } }
 }
@@ -548,55 +545,6 @@ static void CmdScene(const std::vector<std::string>& t, Out& o) {
   else if (!need.empty()) o.line("scene OK: all requirements met");
 }
 
-typedef void (*UidGetFn)(uintptr_t, int*);
-static int SafeUidGet(uintptr_t fn, uintptr_t itf) { int v = -1; __try { ((UidGetFn)fn)(itf, &v); } __except (EXCEPTION_EXECUTE_HANDLER) { v = -1; } return v; }
-static int UidOf(uintptr_t a) {
-  if (!a || !IsA(a, "Obj")) return -1;
-  uintptr_t itf = a + 0x648, vt = RdP(itf), fn = vt ? RdP(vt + 0x10) : 0;
-  return fn ? SafeUidGet(fn, itf) : -1;
-}
-
-struct NpcRow { uintptr_t addr; int uid, idx, hidden; float hp; double loc[3]; bool haveLoc; double dist; std::string cls; };
-
-static void CmdNpcs(const std::vector<std::string>& t, Out& o) {
-  uopt::Args ao = uopt::Parse(t, 1);
-  uintptr_t pawn = ResolveObj("pawn"); double nearLoc[3] = {}; bool haveNear = false, rFilter = ao.Has("r");
-  std::string ne = ao.Has("near") ? ao.Str("near") : "pawn";
-  if (uopt::ParseXyz(ne, nearLoc)) haveNear = true;
-  else { uintptr_t no = ResolveObj(ne); if (no) haveNear = ActorLoc(no, nearLoc); else if (ao.Has("near")) { o.line("error: cannot resolve near=" + ne); return; } }
-  double rad = ao.Dbl("r", 0); long long wantUid = ao.Has("uid") ? ao.Int("uid", 0) : -1; int newN = (int)ao.Int("new", 0);
-  int mx = (int)ao.Int("max", ao.pos.empty() ? 50 : atoi(ao.pos[0].c_str()));
-  std::string cf = Lower(ao.Str("class")); bool all = ao.Flag("all");
-  std::vector<NpcRow> rows; int n = NumObjects();
-  for (int i = 0; i < n; i++) {
-    uintptr_t x = ObjAt(i); if (!x || IsDefault(x) || !IsA(x, "Obj")) continue;
-    if (x == pawn && !all) continue;
-    NpcRow r{}; r.addr = x; r.cls = ClassName(x);
-    if (!cf.empty() && Lower(r.cls).find(cf) == std::string::npos) continue;
-    r.uid = UidOf(x);
-    if (wantUid >= 0 && r.uid != wantUid) continue;
-    r.idx = Rd<int>(x + O_INDEX); r.haveLoc = ActorLoc(x, r.loc); r.dist = 1e18;
-    if (r.haveLoc && haveNear) r.dist = uopt::Dist(r.loc, nearLoc);
-    if (rFilter && (!r.haveLoc || r.dist > rad)) continue;
-    uintptr_t hc = RdP(x + 0x650); r.hp = hc ? Rd<float>(hc + 0x148) : -1.0f;
-    r.hidden = HiddenOf(x); rows.push_back(r);
-  }
-  std::stable_sort(rows.begin(), rows.end(), [](const NpcRow& a, const NpcRow& b) { return a.dist < b.dist; });
-  if (newN > 0) { std::stable_sort(rows.begin(), rows.end(), [](const NpcRow& a, const NpcRow& b) { return a.idx > b.idx; }); if ((int)rows.size() > newN) rows.resize(newN); }
-  int total = (int)rows.size(); if ((int)rows.size() > mx) rows.resize(mx);
-  std::vector<std::string> js;
-  for (auto& r : rows) {
-    std::string d = r.dist < 1e17 ? Fmt("%.0f", r.dist) : "-", lc = r.haveLoc ? Fmt("%.1f,%.1f,%.1f", r.loc[0], r.loc[1], r.loc[2]) : "-";
-    o.f("uid=%d 0x%llx %s hp=%g dist=%s loc=%s hidden=%d idx=%d", r.uid, (unsigned long long)r.addr, r.cls.c_str(), r.hp, d.c_str(), lc.c_str(), r.hidden < 0 ? 0 : r.hidden, r.idx);
-    jo::Obj j; j.num("uid", r.uid).hex("addr", r.addr).str("class", r.cls).dbl("hp", r.hp).b("hidden", r.hidden > 0).num("idx", r.idx);
-    if (r.dist < 1e17) j.dbl("dist", r.dist);
-    if (r.haveLoc) j.raw("loc", jo::Arr({ jo::Dbl(r.loc[0]), jo::Dbl(r.loc[1]), jo::Dbl(r.loc[2]) }));
-    js.push_back(j.done());
-  }
-  JsonSetData(jo::Obj().raw("npcs", jo::Arr(js)).num("total", total).done());
-  o.f("%d npcs", total);
-}
-
 struct CompRow { uintptr_t addr, parent; std::string cls, name, socket, mesh, anim; bool scene, vis, hidden, haveLoc; double loc[3]; int depth; };
 
 static std::string PropObjName(uintptr_t o, const char* path) {
@@ -809,19 +757,16 @@ static void CmdPose(const std::vector<std::string>& t, Out& o) {
   JsonSetData(jo::Obj().hex("actor", actor).hex("mesh", mesh).hex("ref", refActor).str("space", spaceName).raw("rows", jo::Arr(jr)).raw("comps", jo::Arr(jc)).num("flags", flags).done());
   o.f("%zu bones %d comps, %d flags", rows.size(), ncomps, flags);
 }
-#include "ue_quest.inc"
 #include "ue_containers.inc"
 bool HandleUObj(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o) {
-  static const char* cmds[] = { "find", "obj", "get", "set", "call", "funcs", "classes", "props", "watchprop", "unwatch", "con", "uinfo", "dumpfuncs", "dumpvtables", "dumpsdk", "dumpfieldvt", "scene", "snap", "npcs", "uid", "comps", "pose", "quest", "tarray", "tset", "tmap", "layoutcheck" };
+  static const char* cmds[] = { "find", "obj", "get", "set", "call", "funcs", "classes", "props", "watchprop", "unwatch", "con", "uinfo", "dumpfuncs", "dumpvtables", "dumpsdk", "dumpfieldvt", "scene", "snap", "comps", "pose", "tarray", "tset", "tmap", "layoutcheck" };
   if (std::find_if(std::begin(cmds), std::end(cmds), [&](const char* x) { return c == x; }) == std::end(cmds)) return false;
   { std::string why; if (!EnsureUObj(why)) { o.line(why); return true; } }
   std::string err;
   if (c == "scene") { CmdScene(t, o); return true; }
   if (c == "snap") { CmdSnap(t, o); return true; }
-  if (c == "npcs") { CmdNpcs(t, o); return true; }
   if (c == "comps") { CmdComps(t, o); return true; }
   if (c == "pose") { CmdPose(t, o); return true; }
-  if (c == "quest") { CmdQuest(t, o); return true; }
   if (c == "tarray" || c == "tset" || c == "tmap") { CmdContainer(c, t, o); return true; }
   if (c == "layoutcheck") { CmdLayoutCheck(t, o); return true; }
   if (c == "uinfo") { o.f("objects=%d stride=%d arr=0x%llx FField name@0x%x offset@0x%x sizeof(FProperty)=0x%x", NumObjects(), ITEM_STRIDE, g_arr, FF_NAME, P_OFFSET, P_SIZE); return true; }
@@ -915,12 +860,6 @@ bool HandleUObj(const std::string& c, const std::vector<std::string>& t, const s
   }
   uintptr_t obj = ResolveObj(t[1]); if (!obj) { o.line("cannot resolve object " + t[1]); return true; }
   if (c == "obj") { DumpObj(o, obj); return true; }
-  if (c == "uid") {
-    if (!IsA(obj, "Obj")) { o.line("error: not an Obj actor: " + ClassName(obj)); return true; }
-    int u = UidOf(obj);
-    JsonSetData(jo::Obj().num("uid", u).hex("addr", obj).str("class", ClassName(obj)).done());
-    o.f("uid=%d 0x%llx %s", u, (unsigned long long)obj, ClassName(obj).c_str()); return true;
-  }
   if (c == "call") {
     if (t.size() < 3) { o.line("usage: call <obj> <Func> [args]"); return true; }
     o.line(CallFunc(obj, t[2], std::vector<std::string>(t.begin() + 3, t.end()), &o)); return true;

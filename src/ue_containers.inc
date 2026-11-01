@@ -71,7 +71,7 @@ static void CmdLayoutCheck(const std::vector<std::string>& t, Out& o) {
   uintptr_t cls = ResolveStruct(t[1]); if (!cls) { o.line("cannot resolve class " + t[1]); return; }
   uintptr_t obj = 0;
   if (t.size() > 2) { obj = ResolveObj(t[2]); if (!obj) { o.line("cannot resolve object " + t[2]); return; } }
-  std::string dir = S2Env("ANOMALY_SDK", S2Path("sdk")), name = ObjName(cls);
+  std::string dir = UEnv("UESCAN_SDK", UEPath("sdk")), name = ObjName(cls);
   std::map<std::string, std::pair<long, long>> sdk; long sdkSize = -1; bool haveSdk = false;
   for (const std::string& n : { name, t[1] }) {
     FILE* f = fopen((dir + "\\" + n + ".tsv").c_str(), "r"); if (!f) continue;

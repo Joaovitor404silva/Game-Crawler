@@ -28,8 +28,8 @@ async function main() {
   const delayed = line => /wait/.test(line) ? 1200 : 0;
   const s1 = await fake(delayed), s2 = await fake(delayed), s3 = await fake(delayed);
   const p1 = s1.address().port, p2 = s2.address().port, p3 = s3.address().port;
-  const logdir = fs.mkdtempSync(path.join(os.tmpdir(), 's2dev_mcp_'));
-  const env = Object.assign({}, process.env, { ANOMALY_PORT: String(p1), ANOMALY_ALL_PORTS: [p1, p2, p3].join(','), ANOMALY_LOGDIR: logdir, ANOMALY_TIMEOUT: '600' });
+  const logdir = fs.mkdtempSync(path.join(os.tmpdir(), 'uescan_mcp_'));
+  const env = Object.assign({}, process.env, { UESCAN_PORT: String(p1), UESCAN_ALL_PORTS: [p1, p2, p3].join(','), UESCAN_LOGDIR: logdir, UESCAN_TIMEOUT: '600' });
   const srv = spawn(process.execPath, [path.join(root, 'mcp', 'server.js')], { env, stdio: ['pipe', 'pipe', 'inherit'] });
   let id = 0; const pending = {}; let buf = '';
   srv.stdout.on('data', d => {
@@ -40,7 +40,7 @@ async function main() {
   const call = async (name, args) => { const r = await rpc('tools/call', { name, arguments: args || {} }); return { text: r.result ? r.result.content[0].text : JSON.stringify(r.error), err: r.result && r.result.isError }; };
 
   const init = await rpc('initialize', { protocolVersion: '2024-11-05' });
-  ok(init.result.serverInfo.name === 'anomaly-scanner', 'initialize');
+  ok(init.result.serverInfo.name === 'ue-scanner', 'initialize');
   const tl = (await rpc('tools/list', {})).result.tools;
   const names = tl.map(t => t.name);
   for (const n of ['watchw', 'agg', 'scene', 'snap', 'sample', 'mark', 'hits', 'log', 'hook', 'bp', 'status']) ok(names.includes(n), 'tool listed ' + n);
@@ -81,7 +81,7 @@ async function main() {
   await call('watchw', { action: 'stop', id: '3', game: String(p3) });
   ok(last(p3) === 'watchw stop 3', 'watchw stop');
   const w = await call('watchw', { target: '0x2000', size: 8, secs: 1, wait: true, game: String(p3) });
-  ok(!w.err && last(p3) === 'watchw 0x2000 8 secs=1 wait', 'watchw wait extends the timeout beyond ANOMALY_TIMEOUT: ' + w.text);
+  ok(!w.err && last(p3) === 'watchw 0x2000 8 secs=1 wait', 'watchw wait extends the timeout beyond UESCAN_TIMEOUT: ' + w.text);
   const sw = await call('sample', { cols: 'x=[pawn+0x1c8]:f32', hz: 50, secs: 1, wait: true, name: 'a', game: String(p3) });
   ok(!sw.err && last(p3) === 'sample x=[pawn+0x1c8]:f32 50 1 name=a wait', 'sample wait: ' + last(p3));
   const noWait = await call('con', { command: 'wait', game: String(p3) });
@@ -107,7 +107,7 @@ async function main() {
   await call('mark', { text: 'hello world', game: String(p3) });
   ok(last(p3) === 'mark "hello world"', 'mark: ' + last(p3));
 
-  for (const n of ['npcs', 'uid', 'comps', 'pose', 'quest', 'tarray', 'tset', 'tmap', 'layoutcheck', 'memdiff', 'batch', 'stats']) ok(names.includes(n), 'tool listed ' + n);
+  for (const n of ['comps', 'pose', 'tarray', 'tset', 'tmap', 'layoutcheck', 'memdiff', 'batch', 'stats']) ok(names.includes(n), 'tool listed ' + n);
   ok(init.result.serverInfo.version === '2.2.0', 'server version');
   await call('hook', { target: '0x1234', hw: true, opts: 'agg', game: String(p3) });
   ok(last(p3) === 'hook 0x1234 hw agg', 'hook hw: ' + last(p3));
@@ -117,18 +117,10 @@ async function main() {
   ok(last(p3) === 'find isa:Obj 1 loc new=1', 'find new: ' + last(p3));
   await call('find', { query: 'x', hidden: 0, since: 5, nodef: true, game: String(p3) });
   ok(last(p3) === 'find x 30 since=5 hidden=0 nodef', 'find since/hidden: ' + last(p3));
-  await call('npcs', { near: 'pawn', r: 800, max: 5, game: String(p3) });
-  ok(last(p3) === 'npcs near=pawn r=800 max=5', 'npcs: ' + last(p3));
-  await call('npcs', { new: 1, class: 'Human', all: true, game: String(p3) });
-  ok(last(p3) === 'npcs class=Human new=1 all', 'npcs new: ' + last(p3));
-  await call('uid', { obj: '0x10', game: String(p3) });
-  ok(last(p3) === 'uid 0x10', 'uid: ' + last(p3));
   await call('comps', { obj: 'pawn', filter: 'Mesh', game: String(p3) });
   ok(last(p3) === 'comps pawn filter=Mesh', 'comps: ' + last(p3));
   await call('pose', { obj: 'pawn', bones: 'hands', ref: '0x1aec3d07a10', comps: true, space: 'parent', game: String(p3) });
   ok(last(p3) === 'pose pawn bones=hands ref=0x1aec3d07a10 comps space=parent', 'pose args: ' + last(p3));
-  await call('quest', { verb: 'tap', sid: 'show', since: 5, match: 'Bar', game: String(p3) });
-  ok(last(p3) === 'quest tap show since=5 sid=Bar', 'quest args: ' + last(p3));
   await call('tset', { obj: 'pawn', path: 'OwnedComponents', max: 3, game: String(p3) });
   ok(last(p3) === 'tset pawn OwnedComponents max=3', 'tset args: ' + last(p3));
   await call('layoutcheck', { class: 'SceneComponent', obj: 'pawn', game: String(p3) });
@@ -139,7 +131,7 @@ async function main() {
   ok(last(p3) === 'memdiff result m1', 'memdiff result');
   await call('stats', { clear: true, game: String(p3) });
   ok(last(p3) === 'stats clear', 'stats clear');
-  const b = (await call('batch', { commands: ['mark probe7', 'npcs near=pawn r=600 max=3', 'comps pawn filter=Weapon'], game: String(p3) })).text;
+  const b = (await call('batch', { commands: ['mark probe7', 'find x 3', 'comps pawn filter=Weapon'], game: String(p3) })).text;
   ok(b.split('\n').filter(l => l.startsWith('== ')).length === 3 && b.includes('== mark probe7\nR:' + p3 + ':mark probe7') && b.includes('R:' + p3 + ':comps pawn filter=Weapon'), 'batch sections: ' + b);
   const bj = (await call('batch', { commands: ['ping', 'scene'], json: true, game: String(p3) })).text;
   ok(received[p3].includes('json ping') && received[p3].slice(-1)[0] === 'json scene' && bj.startsWith('[') && bj.endsWith(']'), 'batch json: ' + bj);
@@ -156,10 +148,10 @@ async function main() {
   const bAll = (await call('batch', { commands: ['ping', 'ver'], game: 'all' })).text;
   ok([p1, p2, p3].every(p => bAll.includes('== port ' + p + ' ==\n== ping\nR:' + p + ':ping')), 'batch fan-out with game=all');
 
-  fs.writeFileSync(path.join(logdir, 's2dev_' + p2 + '.log'), 'line a\nline b\n');
-  fs.writeFileSync(path.join(logdir, 's2dev.log'), 'shared one\n');
-  const off = fs.statSync(path.join(logdir, 's2dev_' + p2 + '.log')).size;
-  fs.appendFileSync(path.join(logdir, 's2dev_' + p2 + '.log'), 'line c\nline d hit #4\n');
+  fs.writeFileSync(path.join(logdir, 'uescan_' + p2 + '.log'), 'line a\nline b\n');
+  fs.writeFileSync(path.join(logdir, 'uescan.log'), 'shared one\n');
+  const off = fs.statSync(path.join(logdir, 'uescan_' + p2 + '.log')).size;
+  fs.appendFileSync(path.join(logdir, 'uescan_' + p2 + '.log'), 'line c\nline d hit #4\n');
   const l1 = await call('log', { n: 10, game: String(p2) });
   ok(l1.text === 'line a\nline b\nline c\nline d hit #4', 'per-port log: ' + l1.text);
   const l2 = await call('log', { n: 10, since: off, game: String(p2) });
@@ -169,7 +161,7 @@ async function main() {
   const l4 = await call('log', { n: 10, game: String(p1) });
   ok(l4.text === 'shared one', 'fallback to shared log when the port has none: ' + l4.text);
 
-  const cli = (args) => new Promise(res => execFile(process.execPath, [path.join(root, 'anomaly.js'), ...args], { env: Object.assign({}, process.env, { ANOMALY_PORT: '1' }), encoding: 'utf8' }, (e, so, se) => res({ stdout: so, status: e ? e.code : 0 })));
+  const cli = (args) => new Promise(res => execFile(process.execPath, [path.join(root, 'uescan.js'), ...args], { env: Object.assign({}, process.env, { UESCAN_PORT: '1' }), encoding: 'utf8' }, (e, so, se) => res({ stdout: so, status: e ? e.code : 0 })));
   let r = await cli(['--game', String(p2), 'ping']);
   ok(r.stdout.trim() === 'R:' + p2 + ':ping', 'cli --game: ' + r.stdout);
   r = await cli(['--json', '--port', String(p2), 'rd', '0x10', '8']);

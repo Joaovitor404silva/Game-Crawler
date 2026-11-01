@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef struct S2Api {
+typedef struct UEApi {
   int version;
   uintptr_t base;
   void (*log)(const char* fmt, ...);
@@ -17,10 +17,10 @@ typedef struct S2Api {
   int (*call)(uintptr_t obj, const char* func, const char* args, char* out, int n);
   int (*cmd)(const char* line, char* out, int n);
   uint64_t (*ticks)(void);
-} S2Api;
+} UEApi;
 #ifdef __cplusplus
 }
-#define S2_EXPORT extern "C" __declspec(dllexport)
+#define UE_EXPORT extern "C" __declspec(dllexport)
 #else
-#define S2_EXPORT __declspec(dllexport)
+#define UE_EXPORT __declspec(dllexport)
 #endif

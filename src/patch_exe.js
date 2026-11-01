@@ -2,7 +2,7 @@ const fs = require('fs');
 const [,, inp, outp] = process.argv;
 if (!inp || !outp) { console.error('usage: node patch_exe.js in.exe out.exe'); process.exit(2); }
 if (/steamapps/i.test(outp)) { console.error('refusing to write into the Steam install'); process.exit(2); }
-const DLL = 'S2Dev.dll', FN = 'S2DevInit', SECT = '.s2dev';
+const DLL = 'UEScanner.dll', FN = 'UEScannerInit', SECT = '.s2dev';
 let b = fs.readFileSync(inp);
 const al = (v, a) => Math.ceil(v / a) * a;
 function hdr(b) {

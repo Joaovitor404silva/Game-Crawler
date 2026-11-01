@@ -2,13 +2,13 @@
 'use strict';
 const net = require('net'), fs = require('fs'), path = require('path');
 const { AsyncLocalStorage } = require('async_hooks');
-const PORT = +(process.env.ANOMALY_PORT || 27060), TIMEOUT = +(process.env.ANOMALY_TIMEOUT || 30000), CAP = +(process.env.ANOMALY_MCP_CAP || 12000);
-const HOME = process.env.ANOMALY_HOME || path.resolve(__dirname, '..');
-const NAMES = process.env.ANOMALY_NAMES || path.join(HOME, 'names', 'names.tsv'), DECOMP = process.env.ANOMALY_DECOMP || path.join(HOME, 'decomp');
-const LOGDIR = process.env.ANOMALY_LOGDIR || HOME, LOG = path.join(LOGDIR, 's2dev.log');
+const PORT = +(process.env.UESCAN_PORT || 27060), TIMEOUT = +(process.env.UESCAN_TIMEOUT || 30000), CAP = +(process.env.UESCAN_MCP_CAP || 12000);
+const HOME = process.env.UESCAN_HOME || path.resolve(__dirname, '..');
+const NAMES = process.env.UESCAN_NAMES || path.join(HOME, 'names', 'names.tsv'), DECOMP = process.env.UESCAN_DECOMP || path.join(HOME, 'decomp');
+const LOGDIR = process.env.UESCAN_LOGDIR || HOME, LOG = path.join(LOGDIR, 'uescan.log');
 
 const GAMES = { B: 27060, A: 27061, D: 27062, C: 27063, E: 27064 };
-const ALL_PORTS = (process.env.ANOMALY_ALL_PORTS || Object.values(GAMES).join(',')).split(',').map(Number).filter(Boolean);
+const ALL_PORTS = (process.env.UESCAN_ALL_PORTS || Object.values(GAMES).join(',')).split(',').map(Number).filter(Boolean);
 const ctx = new AsyncLocalStorage();
 const socks = {}, chains = {};
 function connect(port) {
@@ -36,7 +36,7 @@ function game(line) {
   const port = c.port, timeout = c.timeout || TIMEOUT;
   const send = c.json && !loaderOnly(line) && !/^\s*json\b/i.test(line) ? 'json ' + line : line;
   const prev = chains[port] || Promise.resolve();
-  const p = prev.then(() => sendOnce(send, port, timeout).catch(e => { throw new Error('S2Dev not reachable on 127.0.0.1:' + port + ' (is the dev game running? start it with launch.ps1): ' + e.message); }));
+  const p = prev.then(() => sendOnce(send, port, timeout).catch(e => { throw new Error('UE Scanner not reachable on 127.0.0.1:' + port + ' (is the dev game running? start it with launch.ps1): ' + e.message); }));
   chains[port] = p.catch(() => {});
   return p;
 }
@@ -104,7 +104,7 @@ function namesSearch(query, limit) {
 }
 function logFile() {
   const c = ctx.getStore() || { port: PORT };
-  const pf = path.join(LOGDIR, 's2dev_' + c.port + '.log');
+  const pf = path.join(LOGDIR, 'uescan_' + c.port + '.log');
   return fs.existsSync(pf) ? pf : LOG;
 }
 function logTail(n, filter, since) {
@@ -139,7 +139,7 @@ const tools = [
   ['sym', 'Address -> rva + symbol name (names.tsv, .pdata function start, natives).', S({ addr: ADDR }, ['addr']), a => cmd('sym', a.addr)],
   ['addr', 'Name -> live address (exact or substring match in names.tsv).', S({ name: str('e.g. Agent::IsChangingWeapon') }, ['name']), a => cmd('addr', a.name)],
   ['names', 'Search names.tsv offline (works without the game): rva, kind, name.', S({ query: str('substring'), limit: int('default 40') }, ['query']), a => namesSearch(a.query, a.limit || 40)],
-  ['decomp', 'Decompiled C (Ghidra dump in ANOMALY_DECOMP) of a function by name or rva (rva may point inside the function). Offline.', S({ what: str('name like Agent::IsChangingWeapon, or rva like 0x441a7e'), max_lines: int('default 200') }, ['what']), a => decomp(a.what, a.max_lines || 200)],
+  ['decomp', 'Decompiled C (Ghidra dump in UESCAN_DECOMP) of a function by name or rva (rva may point inside the function). Offline.', S({ what: str('name like Agent::IsChangingWeapon, or rva like 0x441a7e'), max_lines: int('default 200') }, ['what']), a => decomp(a.what, a.max_lines || 200)],
   ['native', 'Look up natives (exec thunk + impl addresses) by name substring.', S({ name: str('substring') }, ['name']), a => cmd('native', a.name)],
   ['hook', 'Inline hook an address or native. log = log args+caller per hit; block = return 0; ret = return value.', S({ target: ADDR, mode: { type: 'string', enum: ['log', 'block', 'ret'] }, value: str('return value for ret'), exec: { type: 'boolean', description: 'hook the exec thunk instead of the impl' }, hw: { type: 'boolean', description: 'hardware exec breakpoint instead of patched bytes (log only, aggregates); use when the target is already detoured by another module' }, opts: OPTS }, ['target']), a => game(['hook', q(a.target), a.mode && a.mode !== 'log' ? a.mode : '', a.mode === 'ret' ? q(a.value || '0') : '', a.exec ? 'exec' : '', a.hw ? 'hw' : '', a.opts || ''].filter(Boolean).join(' '))],
   ['unhook', 'Remove a hook by id, or all.', S({ id: str('hook id or all') }), a => cmd('unhook', a.id || 'all')],
@@ -147,7 +147,7 @@ const tools = [
   ['bp', 'Hardware breakpoint (DR0-3, all threads): x = execute, w = write, rw = read/write. Hits go to the log (see hits).', S({ kind: { type: 'string', enum: ['x', 'w', 'rw'] }, addr: ADDR, len: int('1|2|4|8 for w/rw (default 4)'), slot: int('debug register 0-3 (shared game: use only your own slots); default = first free'), opts: OPTS }, ['kind', 'addr']), a => game([a.kind === 'x' ? 'bpx' : a.kind === 'w' ? 'bpw' : 'bprw', q(a.addr), a.kind === 'x' ? '' : (a.len || 4), a.slot !== undefined ? 'slot=' + a.slot : '', a.opts || ''].filter(x => x !== '').join(' '))],
   ['bpc', 'Clear hardware breakpoint slot(s).', S({ slot: str('0-3 or all') }), a => cmd('bpc', a.slot || 'all')],
   ['bps', 'List hardware breakpoints with hit counts.', S({}), () => game('bps')],
-  ['hits', 'Recent hook / breakpoint / watch / plugin events from the S2Dev log (offline read). With summary=N: instead the top N unique call stacks per aggregating hook/bp/watch (live `agg top=N`).', S({ n: int('lines (default 40)'), filter: str('regex (default hook|bp|watch|plug hits)'), summary: int('top N stack groups (needs hooks/bps armed with opts "agg")'), since: int('log byte offset from the `mark` tool; only lines after it') }), a => a.summary ? game('agg top=' + a.summary) : logTail(a.n || 40, a.filter || '(hit #|^\\[[^\\]]+\\] bp\\d|watch \\d|\\[plug )', a.since)],
+  ['hits', 'Recent hook / breakpoint / watch / plugin events from the UE Scanner log (offline read). With summary=N: instead the top N unique call stacks per aggregating hook/bp/watch (live `agg top=N`).', S({ n: int('lines (default 40)'), filter: str('regex (default hook|bp|watch|plug hits)'), summary: int('top N stack groups (needs hooks/bps armed with opts "agg")'), since: int('log byte offset from the `mark` tool; only lines after it') }), a => a.summary ? game('agg top=' + a.summary) : logTail(a.n || 40, a.filter || '(hit #|^\\[[^\\]]+\\] bp\\d|watch \\d|\\[plug )', a.since)],
   ['watchw', 'WHO WRITES THIS FIELD: hardware write watch on up to 32 bytes (8 byte chunks over DR0-3, all threads) with stack-walked, aggregated writers (function names, old/new value, count). action=start (default) arms; result/list/stop read or release. Auto-released after secs. Needs free debug registers.', S({ action: { type: 'string', enum: ['start', 'result', 'list', 'stop'] }, target: str('start: address expression (0x.., obj+0x83, [pawn+0x338]+0x10) or an object name together with path'), size: int('bytes 1-64 (aligned chunks must fit in the free debug registers)'), path: str('start with an object as target: property path whose storage is watched'), secs: int('auto release after N seconds (default 30)'), stack: int('caller frames (default 12)'), max: int('top groups to print (default 20)'), wait: { type: 'boolean', description: 'block until the watch is released and return the result' }, id: str('watch id for result/stop (default last/all)'), opts: OPTS }, []),
     a => { const act = a.action || 'start'; if (act !== 'start') return game(['watchw', act, a.id || ''].filter(Boolean).join(' ')); if (!a.target) throw new Error('target is required'); const o = ['watchw', q(a.target), a.path ? q(a.path) : (a.size || 4)]; if (a.secs) o.push('secs=' + a.secs); if (a.stack) o.push('stack=' + a.stack); if (a.max) o.push('max=' + a.max); if (a.wait) o.push('wait'); if (a.opts) o.push(a.opts); return withTimeout(a.wait ? (a.secs || 30) + 15 : 0, () => game(o.join(' '))); }],
   ['agg', 'Aggregated hook/bp/watch hits: count per unique stack (top N groups), optionally clear the tables.', S({ top: int('top N groups per source (default 10)'), clear: { type: 'boolean', description: 'clear the tables after reading' }, src: str('limit to hookN | bpN | wN') }), a => game(['agg', a.top ? 'top=' + a.top : '', a.clear ? 'clear' : '', a.src || ''].filter(Boolean).join(' '))],
@@ -155,12 +155,8 @@ const tools = [
   ['snap', 'Fixture: dump a typed struct/object memory to LogDir\\snaps\\<name>.json (+ .bin) for offline tests.', S({ target: str('address expression, obj+off, or object'), len: str('byte count or auto'), name: str('fixture name'), type: str('Class or Struct name for typed fields') }, ['target', 'len', 'name']), a => game(['snap', q(a.target), a.len, a.name, a.type ? 'type=' + a.type : ''].filter(Boolean).join(' '))],
   ['sample', 'In-core sampler (no round trips): columns of memory/property values at hz for secs into a TSV (tick, ms, columns). action=start (default) | status | stop | show.', S({ action: { type: 'string', enum: ['start', 'status', 'stop', 'show'] }, cols: str('comma list name=<addr expr>:<f32|f64|i8..u64|hex|bool> or name=@obj|Prop.Path'), hz: int('1-200'), secs: int('1-3600'), name: str('file name tag'), file: str('output path (default LogDir\\samples\\...)'), wait: { type: 'boolean', description: 'block until done and show the last rows' }, id: str('sampler id for stop/show'), n: int('rows for show') }, []),
     a => { const act = a.action || 'start'; if (act !== 'start') return game(['sample', act, a.id || '', a.n ? 'n=' + a.n : ''].filter(Boolean).join(' ')); if (!a.cols || !a.hz || !a.secs) throw new Error('cols, hz and secs are required'); const o = ['sample', q(a.cols), a.hz, a.secs]; if (a.name) o.push('name=' + a.name); if (a.file) o.push('file=' + a.file); if (a.wait) o.push('wait'); return withTimeout(a.wait ? a.secs + 15 : 0, () => game(o.join(' '))); }],
-  ['npcs', 'Per-NPC census (every living Obj character): uid, address, class, hp, distance, location, hidden, object index. Sorted by distance to near (default pawn). Use new=1 right after a spawn to get the spawned NPC.', S({ near: str('object or x,y,z (default pawn)'), r: int('radius cm filter'), class: str('class name substring'), uid: int('only this uid'), new: int('only the N most recently created'), max: int('max rows (default 50)'), all: { type: 'boolean', description: 'include the local pawn' } }),
-    a => cmd('npcs', a.near ? 'near=' + a.near : '', a.r !== undefined ? 'r=' + a.r : '', a.class ? 'class=' + a.class : '', a.uid !== undefined ? 'uid=' + a.uid : '', a.new ? 'new=' + a.new : '', a.max ? 'max=' + a.max : '', a.all ? 'all' : '')],
-  ['uid', 'UID of an actor (from its UIDActorComponent); usable with console functions such as XKillNpcByUID.', S({ obj: OBJ }, ['obj']), a => cmd('uid', a.obj)],
   ['comps', 'Components of an actor as an attachment tree: class, name, socket, parent, relative location, visibility, mesh and anim class for skeletal meshes.', S({ obj: OBJ, filter: str('substring matched against class or name'), flat: { type: 'boolean', description: 'no tree order/indent' } }, ['obj']), a => cmd('comps', a.obj, a.filter ? 'filter=' + a.filter : '', a.flat ? 'flat' : '')],
   ['pose', 'Bone, socket and attachment table of an actor: bone transforms (world/comp/parent space), optional reference body (ref) with d_loc/d_rot per bone, attached components with their socket gap. Flags TWIST (hand vs fore_arm roll > 95 deg, or d_rot > 35 deg vs ref) and HOVER (component > 3 cm from its socket).', S({ obj: OBJ, bones: str('hands (default) | arms | legs | all | comma list of bone names'), ref: str('reference actor (stock NPC) to compare against'), comps: { type: 'boolean', description: 'list components attached to a socket with their gap to it' }, space: str('world (default) | comp | parent') }, ['obj']), a => cmd('pose', a.obj, a.bones ? 'bones=' + a.bones : '', a.ref ? 'ref=' + a.ref : '', a.comps ? 'comps' : '', a.space ? 'space=' + a.space : '')],
-  ['quest', 'Live quest graph: list (quests with active/finished counts), state <QuestSID|NodeSID> (active|finished|none, quest, node object), tap on|off|clear|show (poll-diff event ring: start/end/done per node, since=<mark>), end/start <NodeSID> (state before and after), layout (offsets and sanity check).', S({ verb: { type: 'string', enum: ['list', 'state', 'tap', 'end', 'start', 'layout'] }, sid: str('quest or node SID (state/end/start) or on|off|clear|show (tap)'), filter: str('list: substring filter'), since: int('tap show: mark from tap on/show'), match: str('tap show: SID substring'), max: int('tap show: max events') }, ['verb']), a => cmd('quest', a.verb, a.sid || '', a.filter ? 'filter=' + a.filter : '', a.since !== undefined ? 'since=' + a.since : '', a.match ? 'sid=' + a.match : '', a.max ? 'max=' + a.max : '')],
   ['tarray', 'Typed TArray dump: elements of an ArrayProperty with address and value.', S({ obj: OBJ, path: str('property path'), max: int('max elements (default 50)') }, ['obj', 'path']), a => cmd('tarray', a.obj, a.path, a.max ? 'max=' + a.max : '')],
   ['tset', 'Typed TSet dump (sparse array walk with allocation bits). raw=true: obj is a container address and path the element size.', S({ obj: OBJ, path: str('property path (raw: element size)'), max: int('max elements (default 50)'), raw: { type: 'boolean', description: 'untyped dump of a container found by offset' } }, ['obj', 'path']), a => a.raw ? cmd('tset', 'raw', a.obj, a.path, a.max || '') : cmd('tset', a.obj, a.path, a.max ? 'max=' + a.max : '')],
   ['tmap', 'Typed TMap dump: key => value per element; key= filters keys containing the text.', S({ obj: OBJ, path: str('property path'), max: int('max elements (default 50)'), key: str('key substring filter') }, ['obj', 'path']), a => cmd('tmap', a.obj, a.path, a.max ? 'max=' + a.max : '', a.key ? 'key=' + a.key : '')],
@@ -168,7 +164,7 @@ const tools = [
   ['memdiff', 'Poll a memory range for secs at hz and report which byte runs changed (offset, first/last value, f32/i32 view, property name for objects). action=start (default) | result | list | stop.', S({ action: { type: 'string', enum: ['start', 'result', 'list', 'stop'] }, target: ADDR, len: str('bytes 1-65536 or auto (object size)'), secs: int('1-600'), hz: int('1-200 (default 20)'), name: str('tag'), wait: { type: 'boolean', description: 'block until done and return the result' }, id: str('id for result/stop') }, []),
     a => { const act = a.action || 'start'; if (act !== 'start') return game(['memdiff', act, a.id || ''].filter(Boolean).join(' ')); if (!a.target || !a.len || !a.secs) throw new Error('target, len and secs are required'); const o = ['memdiff', q(a.target), a.len, a.secs]; if (a.hz) o.push('hz=' + a.hz); if (a.name) o.push('name=' + a.name); if (a.wait) o.push('wait'); return withTimeout(a.wait ? a.secs + 15 : 0, () => game(o.join(' '))); }],
   ['stats', 'Per-command call count, total and max milliseconds since core load (slow commands >=250 ms also go to the log). clear=true resets.', S({ clear: { type: 'boolean', description: 'reset the counters' } }), a => game(a.clear ? 'stats clear' : 'stats')],
-  ['batch', 'Run several S2Dev command lines in order on one connection (max 50). Each section starts with "== <command>". With json:true the reply is a JSON array of envelopes.', S({ commands: { type: 'array', items: { type: 'string' }, description: 'S2Dev command lines, run in order' }, stop_on_error: { type: 'boolean', description: 'stop at the first error/cannot/unknown/refused line (or ok=false in json mode)' } }, ['commands']),
+  ['batch', 'Run several UE Scanner command lines in order on one connection (max 50). Each section starts with "== <command>". With json:true the reply is a JSON array of envelopes.', S({ commands: { type: 'array', items: { type: 'string' }, description: 'UE Scanner command lines, run in order' }, stop_on_error: { type: 'boolean', description: 'stop at the first error/cannot/unknown/refused line (or ok=false in json mode)' } }, ['commands']),
     async a => {
       const cs = a.commands || [];
       if (!Array.isArray(cs) || !cs.length) throw new Error('commands must be a non-empty array');
@@ -188,9 +184,9 @@ const tools = [
   ['unwatch', 'Remove a property watch (id) or all.', S({ id: str('watch id, empty = all') }), a => cmd('unwatch', a.id)],
   ['plugin', 'Plugins (plugins\\<name>\\*.cpp, auto-rebuilt on save): list | build (build+hot reload) | reload | unload | log (build log) | watch on/off.', S({ action: { type: 'string', enum: ['list', 'build', 'reload', 'unload', 'log', 'watch'] }, name: str('plugin name (or on/off for watch)') }, ['action']), a => cmd('plug', a.action, a.name)],
   ['con', 'Run a UE console command (ExecuteConsoleCommand).', S({ command: str('console command') }, ['command']), a => game('con ' + a.command)],
-  ['log', 'Tail of the per-port S2Dev log s2dev_<port>.log (offline read; falls back to the shared s2dev.log).', S({ n: int('lines (default 40)'), filter: str('regex'), since: int('byte offset from the `mark` tool') }), a => logTail(a.n || 40, a.filter, a.since)],
-  ['reload_core', 'Hot reload S2DevCore.dll after `src\\build.bat core`.', S({}), () => game('reload')],
-  ['raw', 'Run any S2Dev CLI command line verbatim (see `help`).', S({ command: str('e.g. help, aob 48 8B ?? 20, uinfo') }, ['command']), a => game(a.command)],
+  ['log', 'Tail of the per-port UE Scanner log uescan_<port>.log (offline read; falls back to the shared uescan.log).', S({ n: int('lines (default 40)'), filter: str('regex'), since: int('byte offset from the `mark` tool') }), a => logTail(a.n || 40, a.filter, a.since)],
+  ['reload_core', 'Hot reload UEScannerCore.dll after `src\\build.bat core`.', S({}), () => game('reload')],
+  ['raw', 'Run any UE Scanner CLI command line verbatim (see `help`).', S({ command: str('e.g. help, aob 48 8B ?? 20, uinfo') }, ['command']), a => game(a.command)],
 ];
 for (const t of tools) if (t[2] && t[2].properties) { t[2].properties.game = { type: 'string', description: 'which dev game: B client (default), A host, D client 2, C host 2, E client 3, all (run on every port, one section each), or a port. Applied per call, no reconnect needed.' };
   t[2].properties.json = { type: 'boolean', description: 'ask the game for structured JSON ({ok,cmd,port,ms,data,lines}) instead of text' };
@@ -199,7 +195,7 @@ const byName = Object.fromEntries(tools.map(t => [t[0], t]));
 
 const send = m => process.stdout.write(JSON.stringify(m) + '\n');
 async function onMessage(m) {
-  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: (m.params && m.params.protocolVersion) || '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'anomaly-scanner', version: '2.2.0' } } });
+  if (m.method === 'initialize') return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: (m.params && m.params.protocolVersion) || '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'ue-scanner', version: '2.2.0' } } });
   if (m.id === undefined) return;
   if (m.method === 'ping') return send({ jsonrpc: '2.0', id: m.id, result: {} });
   if (m.method === 'tools/list') return send({ jsonrpc: '2.0', id: m.id, result: { tools: tools.map(([name, description, inputSchema]) => ({ name, description, inputSchema })) } });
