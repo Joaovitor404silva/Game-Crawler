@@ -1,8 +1,9 @@
 # Game Crawler
 
-A live, in-process debugger for **Unreal Engine games** (UE 4.25+ and UE 5.x, Windows x64), built for modders and for AI
-coding agents. It loads into a dev *copy* of the game through a `version.dll` proxy and exposes Unreal reflection, memory,
-hooks and hardware breakpoints over a local TCP port. It comes with a CLI and an **MCP server**, so Claude Code (or any MCP
+A live, in-process debugger and input bot for **64-bit Windows games**, built for modders and for AI coding agents. Memory,
+hooks, hardware breakpoints, plugins and the input bot work on any engine (tested on Unreal and X-Ray); **Unreal Engine** games
+(UE 4.25+ and UE 5.x) also get full reflection. It loads into a dev *copy* of the game through a `version.dll` proxy and
+exposes everything over a local TCP port. It comes with a CLI and an **MCP server**, so Claude Code (or any MCP
 client) can inspect and drive the running game.
 
 - Find UObjects, read and write properties, call UFunctions on the game thread
