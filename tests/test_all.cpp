@@ -300,6 +300,7 @@ static void TestUeScan() {
   PutEntry(m, 0x400000, "None"); PutEntry(m, 0x400006, "ByteProperty"); PutEntry(m, 0x400014, "Actor"); PutEntry(m, 0x40001C, "Ab", true);
   uint64_t blocks = 0x1000 + 0x100; m.Put<uint64_t>(blocks, 0x400000); m.Put<uint32_t>(blocks - 8, 0);
   CHECK(ues::FindNameBlocks(m.At(0x1000, 0x200), 0x200, 0x1000, rd) == blocks);
+  m.Put<uint64_t>(blocks + 8, 0x100000); CHECK(ues::FindNameBlocks(m.At(0x1000, 0x200), 0x200, 0x1000, rd) == 0); m.Put<uint64_t>(blocks + 8, 0); m.r[0x500000] = std::vector<uint8_t>(0x100); for (int i = 0; i < 20; i++) PutEntry(m, 0x500000 + i * 4, "Ab"); m.Put<uint64_t>(0x10C0, 0x400000); CHECK(ues::FindNameBlocks(m.At(0x1000, 0x200), 0x200, 0x1000, rd) == 0x10C0); m.Put<uint64_t>(blocks + 8, 0x500000); CHECK(ues::FindNameBlocks(m.At(0x1000, 0x200), 0x200, 0x1000, rd) == blocks); m.Put<uint64_t>(blocks + 8, 0); m.Put<uint64_t>(0x10C0, 0);
   std::string s;
   CHECK(ues::NameAt(rd, blocks, 0, s) && s == "None");
   CHECK(ues::NameAt(rd, blocks, 3, s) && s == "ByteProperty");

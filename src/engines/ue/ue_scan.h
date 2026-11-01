@@ -55,15 +55,36 @@ inline bool IsPoolBlock0(const ReadFn& rd, uint64_t b) {
   return ReadEntry(rd, b, a, &n) && a == "None" && ReadEntry(rd, b + n, c) && c == "ByteProperty";
 }
 
+inline bool ChainOk(const ReadFn& rd, uint64_t at, int count) {
+  for (int i = 0; i < count; i++) {
+    std::string s; int bytes = 0; if (!ReadEntry(rd, at, s, &bytes)) return false;
+    for (char c : s) if ((unsigned char)c < 0x20 || (unsigned char)c > 0x7e) return false;
+    at += bytes;
+  }
+  return true;
+}
+
+inline int BlocksValid(const uint8_t* data, size_t n, size_t o, const ReadFn& rd) {
+  int k = 1;
+  for (; k < 16 && o + k * 8 + 8 <= n; k++) {
+    uint64_t b; memcpy(&b, data + o + k * 8, 8);
+    if (!b) break;
+    if (!Plausible(b) || !ChainOk(rd, b, 20)) return 0;
+  }
+  return k;
+}
+
 inline uint64_t FindNameBlocks(const uint8_t* data, size_t n, uint64_t va, const ReadFn& rd) {
+  uint64_t best = 0; int bestK = 0;
   for (size_t o = 0x10; o + 16 <= n; o += 8) {
     uint64_t b0; memcpy(&b0, data + o, 8); if (!Plausible(b0)) continue;
     uint16_t h; if (!rd(b0, &h, 2) || (h >> 6) != 4 || (h & 1)) continue;
     if (!IsPoolBlock0(rd, b0)) continue;
     uint32_t cur; memcpy(&cur, data + o - 8, 4); if (cur > 8191) continue;
-    return va + o;
+    int k = BlocksValid(data, n, o, rd);
+    if (k > bestK) { bestK = k; best = va + o; }
   }
-  return 0;
+  return best;
 }
 
 inline bool NameAt(const ReadFn& rd, uint64_t blocks, uint32_t idx, std::string& s) {

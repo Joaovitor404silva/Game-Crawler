@@ -881,19 +881,29 @@ static rty::Gate g_gate;
 static std::mutex g_gm;
 static void SetWhy(const std::string& w) { std::lock_guard<std::mutex> l(g_gm); g_why = w; }
 
-static bool DataSection(uintptr_t& beg, size_t& n) {
+static std::vector<std::pair<uintptr_t, size_t>> DataSections(bool& named) {
   auto dos = (IMAGE_DOS_HEADER*)H->base; auto nt = (IMAGE_NT_HEADERS64*)(H->base + dos->e_lfanew); auto sec = IMAGE_FIRST_SECTION(nt);
-  for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) if (!memcmp(sec[i].Name, ".data\0\0\0", 8)) { beg = H->base + sec[i].VirtualAddress; n = sec[i].Misc.VirtualSize; return true; }
-  return false;
+  std::vector<std::pair<uintptr_t, size_t>> v; named = false;
+  for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) if (!memcmp(sec[i].Name, ".data\0\0\0", 8)) { named = true; v.push_back({ H->base + sec[i].VirtualAddress, sec[i].Misc.VirtualSize }); return v; }
+  for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+    DWORD ch = sec[i].Characteristics;
+    if ((ch & IMAGE_SCN_MEM_WRITE) && !(ch & IMAGE_SCN_MEM_EXECUTE) && sec[i].Misc.VirtualSize >= 0x1000 && sec[i].Misc.VirtualSize <= 0x8000000) v.push_back({ H->base + sec[i].VirtualAddress, sec[i].Misc.VirtualSize });
+  }
+  return v;
 }
 static void ScanGlobals(bool loud) {
-  uintptr_t beg; size_t n; if (!DataSection(beg, n)) { if (loud) LOG("no .data section"); return; }
-  std::vector<uint8_t> buf(n);
-  for (size_t o = 0; o < n; o += 0x1000) { size_t k = n - o < 0x1000 ? n - o : 0x1000; if (!SafeRead(&buf[o], beg + o, k)) memset(&buf[o], 0, k); }
-  uint64_t t0 = GetTickCount64();
-  if (!g_arr) { auto h = ues::FindObjArray(buf.data(), n, beg, SafeRd); if (h.va) { g_arr = (uintptr_t)h.va; ITEM_STRIDE = h.stride; } }
-  if (!g_blocks) g_blocks = (uintptr_t)ues::FindNameBlocks(buf.data(), n, beg, SafeRd);
-  if (loud) LOG("scan .data %zu KB in %llu ms: GUObjectArray rva 0x%llx FNamePool blocks rva 0x%llx", n / 1024, GetTickCount64() - t0, g_arr ? g_arr - H->base : 0, g_blocks ? g_blocks - H->base : 0);
+  bool named; auto secs = DataSections(named);
+  if (secs.empty()) { if (loud) LOG("no writable data section"); return; }
+  for (auto& sc : secs) {
+    uintptr_t beg = sc.first; size_t n = sc.second;
+    std::vector<uint8_t> buf(n);
+    for (size_t o = 0; o < n; o += 0x1000) { size_t k = n - o < 0x1000 ? n - o : 0x1000; if (!SafeRead(&buf[o], beg + o, k)) memset(&buf[o], 0, k); }
+    uint64_t t0 = GetTickCount64();
+    if (!g_arr) { auto h = ues::FindObjArray(buf.data(), n, beg, SafeRd); if (h.va) { g_arr = (uintptr_t)h.va; ITEM_STRIDE = h.stride; } }
+    if (!g_blocks) g_blocks = (uintptr_t)ues::FindNameBlocks(buf.data(), n, beg, SafeRd);
+    if (loud) LOG("scan %s rva 0x%llx %zu KB in %llu ms: GUObjectArray rva 0x%llx FNamePool blocks rva 0x%llx", named ? ".data" : "data section", beg - H->base, n / 1024, GetTickCount64() - t0, g_arr ? g_arr - H->base : 0, g_blocks ? g_blocks - H->base : 0);
+    if (g_arr && g_blocks) break;
+  }
 }
 static bool DecodeInsn(uint64_t at, ues::Insn& out) {
   uint8_t b[16]; if (!SafeRead(b, (uintptr_t)at, 16)) return false;
@@ -924,11 +934,12 @@ void InitUObj() {
   for (int nameOff : { 0x28, 0x20, 0x30 }) {
     FF_NAME = nameOff; FF_NEXT = nameOff - 8;
     uintptr_t pt = FindProp(actor, "PrimaryActorTick"), be = FindProp(pawn, "BaseEyeHeight");
+    if (loud) LOG("FField try name@0x%x: PrimaryActorTick 0x%llx BaseEyeHeight 0x%llx", nameOff, pt, be);
     if (!pt || !be) continue;
     P_ARRAYDIM = -1;
     for (int off = nameOff + 0x8; off < nameOff + 0x30; off += 4) if (Rd<int>(be + off) == 1 && Rd<int>(be + off + 4) == 4 && Rd<int>(pt + off) == 1 && Rd<int>(pt + off + 4) >= 0x20) { P_ARRAYDIM = off; P_ELEMSIZE = off + 4; break; }
     if (P_ARRAYDIM < 0) continue;
-    for (int off = P_ELEMSIZE + 4; off < nameOff + 0x40; off += 4) { int pb = Rd<int>(be + off); if (Rd<int>(pt + off) == 0x28 && pb >= 0x200 && pb < 0x2000 && !(pb & 3)) { P_OFFSET = off; found = true; break; } }
+    for (int off = P_ELEMSIZE + 4; off < nameOff + 0x40; off += 4) { int pb = Rd<int>(be + off); if (Rd<int>(pt + off) == 0x28 && pb >= 0x200 && pb < 0x100000 && !(pb & 3)) { P_OFFSET = off; found = true; break; } }
     if (!found) continue;
     P_FLAGS = (P_ELEMSIZE + 4 + 7) & ~7;
     for (int off = P_OFFSET + 4; off < P_OFFSET + 0x60; off += 8) { uintptr_t s = RdP(pt + off); if (IsObj(s) && ObjName(s) == "ActorTickFunction") { P_SIZE = off; break; } }
@@ -969,6 +980,13 @@ static bool EnsureUObj(std::string& why) {
 
 bool UeTry(std::string& why) { return EnsureUObj(why); }
 
-static bool UeDetect() { return ImageHasWide(L"++UE4") || ImageHasWide(L"++UE5") || ExeNameHas("-Win64-Shipping") || ExeNameHas("-WinGDK-Shipping"); }
+static bool UeLayout() {
+  char p[MAX_PATH]; DWORD n = GetModuleFileNameA(nullptr, p, MAX_PATH); if (!n || n >= MAX_PATH) return false;
+  std::string s(p); size_t b = s.rfind("\\Binaries\\"); if (b == std::string::npos || b == 0) return false;
+  size_t proj = s.rfind('\\', b - 1); if (proj == std::string::npos) return false;
+  DWORD at = GetFileAttributesA((s.substr(0, proj) + "\\Engine").c_str());
+  return at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_DIRECTORY);
+}
+static bool UeDetect() { return ImageHasWide(L"++UE4") || ImageHasWide(L"++UE5") || ExeNameHas("-Win64-Shipping") || ExeNameHas("-WinGDK-Shipping") || UeLayout(); }
 static std::string UeLabel(uintptr_t a) { return IsObj(a) ? ObjName(a) : std::string(); }
 extern const EngineBackend kUnreal = { "unreal", UeDetect, UeTry, UeReady, UeTickWatches, UeResolveObj, UeObjSize, UePropAtOffset, UeDescribeObj, UeLabel, UeHandle, UeUPropAddr, UeSnapType, UeSnapFields };

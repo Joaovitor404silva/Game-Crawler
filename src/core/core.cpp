@@ -437,6 +437,7 @@ extern "C" __declspec(dllexport) int CoreInit(HostApi* api) {
   g_imgEnd = H->base + nt->OptionalHeader.SizeOfImage;
   auto sec = IMAGE_FIRST_SECTION(nt);
   for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) if (!memcmp(sec[i].Name, ".text", 5)) { g_textBeg = H->base + sec[i].VirtualAddress; g_textEnd = g_textBeg + sec[i].Misc.VirtualSize; }
+  if (!g_textBeg) for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) if (sec[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) { uintptr_t b = H->base + sec[i].VirtualAddress, e = b + sec[i].Misc.VirtualSize; if (!g_textBeg || b < g_textBeg) g_textBeg = b; if (e > g_textEnd) g_textEnd = e; }
   LoadNatives();
   LOG("names.tsv: %d entries", LoadNames());
   { std::string w; EngineTry(w); }
