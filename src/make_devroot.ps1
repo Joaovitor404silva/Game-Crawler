@@ -1,24 +1,42 @@
 ﻿param(
-  [string]$Game = 'C:\Program Files (x86)\Steam\steamapps\common\S.T.A.L.K.E.R. 2 Heart of Chornobyl',
-  [string]$DevRoot = 'C:\S2DevRoot'
+  [Parameter(Mandatory = $true)][string]$Exe,
+  [string]$DevRoot
 )
 $ErrorActionPreference = 'Stop'
-$g = $Game; $r = $DevRoot
-if (-not (Test-Path "$g\Stalker2\Binaries\Win64\Stalker2-Win64-Shipping.exe")) { throw "game not found at $g (use -Game)" }
-if ($r -like "$g*") { throw 'DevRoot must be outside the game folder' }
+$Exe = (Resolve-Path $Exe).Path
+if ($Exe -notlike '*.exe') { throw "not an exe: $Exe" }
+$win64 = Split-Path $Exe
+$root = $win64
+while ($root -and -not (Test-Path (Join-Path $root 'Engine'))) { $root = Split-Path $root }
+if (-not $root) { throw "no Engine folder above $Exe; is this an Unreal Engine game?" }
+$name = Split-Path $root -Leaf
+if (-not $DevRoot) { $DevRoot = Join-Path 'C:\UEScanRoot' ($name -replace '[^A-Za-z0-9._-]', '_') }
+$r = $DevRoot.TrimEnd('\')
+if ($r -like "$root*") { throw 'DevRoot must be outside the game folder' }
+$skipFiles = 'dwmapi.dll', 'version.dll', 'dxgi.dll', 'winmm.dll', 'xinput1_3.dll', 'dinput8.dll', 'd3d11.dll', 'UE4SS.dll', 'UE4SS-settings.ini'
+$skipDirs = 'ue4ss', 'Mods', '~mods', 'LogicMods', 'Saved'
 function MkJ($p, $t) { if (-not (Test-Path $p)) { New-Item -ItemType Junction -Path $p -Target $t | Out-Null } }
-function MkH($p, $t) { if (-not (Test-Path $p)) { New-Item -ItemType HardLink -Path $p -Target $t | Out-Null } }
-New-Item -ItemType Directory -Force "$r\Stalker2\Binaries\Win64", "$r\Stalker2\Content\Paks" | Out-Null
-MkJ "$r\Engine" "$g\Engine"
-if (Test-Path "$g\DLC1") { MkJ "$r\DLC1" "$g\DLC1" }
-foreach ($f in 'DLC_CostOfHope', 'InstallScript.vdf', 'Stalker2.exe') { if (Test-Path "$g\$f" -PathType Leaf) { MkH "$r\$f" "$g\$f" } elseif (Test-Path "$g\$f") { MkJ "$r\$f" "$g\$f" } }
-MkJ "$r\Stalker2\Plugins" "$g\Stalker2\Plugins"
-foreach ($d in 'Movies', 'Razer') { if (Test-Path "$g\Stalker2\Content\$d") { MkJ "$r\Stalker2\Content\$d" "$g\Stalker2\Content\$d" } }
-Get-ChildItem "$g\Stalker2\Content\Paks" -File | ForEach-Object { MkH "$r\Stalker2\Content\Paks\$($_.Name)" $_.FullName }
-$w = "$g\Stalker2\Binaries\Win64"
-foreach ($d in 'D3D12', 'DML') { if (Test-Path "$w\$d") { MkJ "$r\Stalker2\Binaries\Win64\$d" "$w\$d" } }
-Get-ChildItem $w -File | Where-Object { $_.Name -notin 'dwmapi.dll', 'Stalker2-Win64-Shipping.exe' } | ForEach-Object { MkH "$r\Stalker2\Binaries\Win64\$($_.Name)" $_.FullName }
-$exe = "$r\Stalker2\Binaries\Win64\Stalker2-Win64-Shipping.exe"
-if (Test-Path $exe) { if ((Get-Item $exe).LinkType) { throw 'dev exe is a link, refusing' } } else {
-  node "$PSScriptRoot\patch_exe.js" "$w\Stalker2-Win64-Shipping.exe" $exe; if ($LASTEXITCODE) { throw 'patch failed' } }
+function MkH($p, $t) { if (-not (Test-Path $p)) { try { New-Item -ItemType HardLink -Path $p -Target $t -ErrorAction Stop | Out-Null } catch { Copy-Item $t $p } } }
+$descend = @($win64)
+Get-ChildItem $root -Directory | ForEach-Object { $pk = Join-Path $_.FullName 'Content\Paks'; if (Test-Path $pk) { $descend += $pk } }
+function Mirror($src, $dst) {
+  New-Item -ItemType Directory -Force $dst | Out-Null
+  foreach ($c in Get-ChildItem $src -Force) {
+    $t = Join-Path $dst $c.Name
+    if ($c.PSIsContainer) {
+      if ($skipDirs -contains $c.Name) { continue }
+      $onPath = $descend | Where-Object { $_ -eq $c.FullName -or $_ -like "$($c.FullName)\*" }
+      if ($onPath) { Mirror $c.FullName $t } else { MkJ $t $c.FullName }
+    } else {
+      if ($src -eq $win64 -and $skipFiles -contains $c.Name) { continue }
+      MkH $t $c.FullName
+    }
+  }
+}
+Mirror $root $r
+$devWin64 = $win64.Replace($root, $r)
+Copy-Item "$PSScriptRoot\..\bin\proxy\version.dll" (Join-Path $devWin64 'version.dll') -Force
+Set-Content -Encoding ascii (Join-Path $devWin64 'uescan_home.txt') (Resolve-Path "$PSScriptRoot\..").Path
+Set-Content -Encoding ascii (Join-Path $r 'uescan_exe.txt') $Exe.Replace($root, $r)
 "devroot ok: $r"
+"exe: $($Exe.Replace($root, $r))"

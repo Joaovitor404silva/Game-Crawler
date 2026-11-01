@@ -5,9 +5,16 @@ for (let i = 0; i < args.length; i++) { const a = args[i]; if (a === '--offline'
 const HOME = process.env.UESCAN_HOME || ROOT;
 const D = path.resolve(opt.dir || path.join(HOME, 'names'));
 const OUT = path.resolve(opt.out || process.env.UESCAN_NAMES || path.join(D, 'names.tsv'));
-const EXE = opt.exe || 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\S.T.A.L.K.E.R. 2 Heart of Chornobyl\\Stalker2\\Binaries\\Win64\\Stalker2-Win64-Shipping.exe';
-if (!fs.existsSync(EXE)) { console.error('game exe not found: ' + EXE + ' (use --exe)'); process.exit(2); }
 fs.mkdirSync(D, { recursive: true });
+const liveExe = () => {
+  const a = [path.join(ROOT, 'uescan.js')]; if (opt.port) a.push('--port', opt.port);
+  const m = /pid=(\d+)/.exec(cp.spawnSync(process.execPath, a.concat(['ping']), { encoding: 'utf8' }).stdout || ''); if (!m) return '';
+  return (cp.spawnSync('powershell', ['-NoProfile', '-Command', `(Get-Process -Id ${m[1]}).Path`], { encoding: 'utf8' }).stdout || '').trim();
+};
+const exeFile = path.join(D, 'exe.txt');
+const EXE = opt.exe || (opt.offline ? (fs.existsSync(exeFile) ? fs.readFileSync(exeFile, 'utf8').trim() : '') : liveExe());
+if (!EXE || !fs.existsSync(EXE)) { console.error('game exe not found: ' + (EXE || '(no running dev game)') + ' (use --exe)'); process.exit(2); }
+fs.writeFileSync(exeFile, EXE);
 const rd = f => fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split(/\r?\n/) : [];
 const tsv = f => rd(f).filter(l => l).map(l => l.split('\t'));
 const hex = s => parseInt(s, 16);

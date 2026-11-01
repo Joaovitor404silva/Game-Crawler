@@ -2,7 +2,8 @@
 #include "core.h"
 #include "home.h"
 #include "json_out.h"
-#include "sig.h"
+#include "ue_scan.h"
+#include "minhook/src/hde/hde64.h"
 #include "ue_opts.h"
 #include "pose.h"
 #include "containers.h"
@@ -14,8 +15,8 @@
 #include <cstdio>
 #include <algorithm>
 
-static uintptr_t g_fnToString, g_fnCtor;
-static const int PE_VSLOT = 0x278;
+static uintptr_t g_blocks;
+static int PE_VSLOT = -1;
 
 static int O_INDEX = 0xC, O_CLASS = 0x10, O_NAME = 0x18, O_OUTER = 0x20, F_NEXT = 0x28;
 static int S_SUPER = 0x40, S_CHILDREN = 0x48, S_CHILDPROPS = 0x50, S_SIZE = 0x58;
@@ -26,6 +27,7 @@ static uintptr_t g_arr;
 static bool EnsureUObj(std::string& why);
 
 struct FStr { wchar_t* data; int num, max; };
+static const ues::ReadFn SafeRd = [](uint64_t a, void* o, size_t n) { return SafeRead(o, (uintptr_t)a, n); };
 
 static std::mutex g_nm;
 static std::unordered_map<uint32_t, std::string> g_names;
@@ -34,20 +36,20 @@ std::string NameStr(uint64_t fname) {
   std::string s;
   { std::lock_guard<std::mutex> l(g_nm); auto it = g_names.find(idx); if (it != g_names.end()) s = it->second; }
   if (s.empty()) {
-    uint64_t n0 = idx; FStr out{};
-    if (!g_fnToString || !SafeNameToString((void*)g_fnToString, &n0, &out) || !out.data || out.num <= 0 || out.num > 4096) return Fmt("<name %u>", idx);
-    s = Narrow(out.data, out.num - 1);
+    if (!g_blocks || !ues::NameAt(SafeRd, g_blocks, idx, s)) return Fmt("<name %u>", idx);
     std::lock_guard<std::mutex> l(g_nm); g_names[idx] = s;
   }
   if (num) s += Fmt("_%u", num - 1);
   return s;
 }
 static bool MakeFName(const std::string& s, uint64_t& out) {
-  typedef void(__fastcall* Ctor)(uint64_t*, const wchar_t*, int);
-  std::wstring w = Widen(s); out = 0;
-  struct L { static bool Call(Ctor f, uint64_t* o, const wchar_t* w) { __try { f(o, w, 1); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } } };
-  if (!g_fnCtor) return false;
-  return L::Call((Ctor)g_fnCtor, &out, w.c_str());
+  static std::unordered_map<std::string, uint32_t> pool; static uint64_t built;
+  std::lock_guard<std::mutex> l(g_nm); out = 0;
+  if (!g_blocks) return false;
+  if (!pool.empty() && ues::LookupName(pool, s, out)) return true;
+  uint64_t now = GetTickCount64(); if (now - built < 2000 && !pool.empty()) return false;
+  built = now; ues::IndexPool(SafeRd, g_blocks, pool);
+  return ues::LookupName(pool, s, out);
 }
 
 static int NumObjects() { return Rd<int>(g_arr + 0x10 + 0x14, 0); }
@@ -319,16 +321,17 @@ static void DumpObj(Out& o, uintptr_t a) {
   }
 }
 
-static int g_funcOff = -1;
+static int g_funcOff = -1, g_flagsOff = -1;
 static int DetectFuncOff() {
   if (g_funcOff >= 0) return g_funcOff;
   uintptr_t actor = FindFirst([](uintptr_t o) { return ObjName(o) == "Actor" && ClassName(o) == "Class"; });
   uintptr_t f = actor ? FindFunc(actor, "K2_GetActorLocation") : 0; if (!f) return -1;
   uintptr_t f2 = FindFunc(actor, "K2_GetActorRotation"), f3 = FindFunc(actor, "K2_SetActorLocation"), ts; size_t tn;
-  if (!f2 || !f3 || !SigText(H->base, &ts, &tn)) return -1;
+  if (!f2 || !f3 || !TextBeg()) return -1; ts = TextBeg(); tn = TextEnd() - TextBeg();
   auto inText = [&](uintptr_t o, int off) { uintptr_t v = RdP(o + off); return v >= ts && v < ts + tn; };
-  for (int off = 0xB0; off < 0x110; off += 8) if (inText(f, off) && inText(f2, off) && inText(f3, off)) { g_funcOff = off; break; }
-  LOG("UFunction::Func offset = 0x%x", g_funcOff); return g_funcOff;
+  for (int off = 0x80; off < 0x110; off += 8) if (inText(f, off) && inText(f2, off) && inText(f3, off)) { g_funcOff = off; break; }
+  if (g_funcOff >= 0 && (Rd<uint32_t>(f + g_funcOff - 0x28) & 0x400) && (Rd<uint32_t>(f2 + g_funcOff - 0x28) & 0x400)) g_flagsOff = g_funcOff - 0x28;
+  LOG("UFunction::Func offset = 0x%x FunctionFlags = 0x%x", g_funcOff, g_flagsOff); return g_funcOff;
 }
 static std::string WriteRows(const std::string& file, const char* header, const std::vector<std::string>& rows) {
   FILE* f; if (fopen_s(&f, file.c_str(), "wb")) return "cannot open " + file;
@@ -342,7 +345,7 @@ static std::string DumpFuncs(const std::string& file) {
     for (int i = 0; i < n; i++) {
       uintptr_t x = ObjAt(i); if (!x) continue; uintptr_t c = ClassOf(x); if (!c) continue;
       std::string cn = ObjName(c); if (cn != "Function" && cn != "DelegateFunction" && cn != "SparseDelegateFunction") continue;
-      uintptr_t fn = RdP(x + fo); uint32_t fl = Rd<uint32_t>(x + 0xB0); uintptr_t ow = OuterOf(x);
+      uintptr_t fn = RdP(x + fo); uint32_t fl = g_flagsOff >= 0 ? Rd<uint32_t>(x + g_flagsOff) : 0; uintptr_t ow = OuterOf(x);
       rows.push_back(Fmt("%s\t%s\t%s\t%08x\t%llx\t%s", ow ? ObjName(ow).c_str() : "?", ObjName(x).c_str(), cn.c_str(), fl,
                          InModule(fn) ? (unsigned long long)(fn - H->base) : 0ULL, ow ? PathOf(ow).c_str() : "?"));
     }
@@ -852,7 +855,7 @@ bool HandleUObj(const std::string& c, const std::vector<std::string>& t, const s
         if (ClassName(f) != "Function" && ClassName(f) != "DelegateFunction") continue;
         std::string nm = ObjName(f); if (Lower(nm).find(lf) == std::string::npos) continue;
         std::string sig; ForProps(f, false, [&](uintptr_t q) { uint64_t fl = PropFlags(q); if (fl & 0x80) sig += Fmt("%s%s %s%s", sig.empty() ? "" : ", ", PropType(q).c_str(), PropName(q).c_str(), (fl & 0x400) ? "(ret)" : (fl & 0x100) ? "(out)" : ""); return true; });
-        uintptr_t native = 0; for (int off = 0xB0; off < 0x100; off += 8) { uintptr_t v = RdP(f + off); if (InText(v)) { native = v; break; } }
+        uintptr_t native = 0; for (int off = 0x80; off < 0x110; off += 8) { uintptr_t v = RdP(f + off); if (InText(v)) { native = v; break; } }
         o.f("%-20s %-40s (%s) %s", ObjName(s).c_str(), nm.c_str(), sig.c_str(), native ? Sym(native).c_str() : "");
       }
     }
@@ -885,17 +888,33 @@ static rty::Gate g_gate;
 static std::mutex g_gm;
 static void SetWhy(const std::string& w) { std::lock_guard<std::mutex> l(g_gm); g_why = w; }
 
+static bool DataSection(uintptr_t& beg, size_t& n) {
+  auto dos = (IMAGE_DOS_HEADER*)H->base; auto nt = (IMAGE_NT_HEADERS64*)(H->base + dos->e_lfanew); auto sec = IMAGE_FIRST_SECTION(nt);
+  for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) if (!memcmp(sec[i].Name, ".data\0\0\0", 8)) { beg = H->base + sec[i].VirtualAddress; n = sec[i].Misc.VirtualSize; return true; }
+  return false;
+}
+static void ScanGlobals(bool loud) {
+  uintptr_t beg; size_t n; if (!DataSection(beg, n)) { if (loud) LOG("no .data section"); return; }
+  std::vector<uint8_t> buf(n);
+  for (size_t o = 0; o < n; o += 0x1000) { size_t k = n - o < 0x1000 ? n - o : 0x1000; if (!SafeRead(&buf[o], beg + o, k)) memset(&buf[o], 0, k); }
+  uint64_t t0 = GetTickCount64();
+  if (!g_arr) { auto h = ues::FindObjArray(buf.data(), n, beg, SafeRd); if (h.va) { g_arr = (uintptr_t)h.va; ITEM_STRIDE = h.stride; } }
+  if (!g_blocks) g_blocks = (uintptr_t)ues::FindNameBlocks(buf.data(), n, beg, SafeRd);
+  if (loud) LOG("scan .data %zu KB in %llu ms: GUObjectArray rva 0x%llx FNamePool blocks rva 0x%llx", n / 1024, GetTickCount64() - t0, g_arr ? g_arr - H->base : 0, g_blocks ? g_blocks - H->base : 0);
+}
+static bool DecodeInsn(uint64_t at, ues::Insn& out) {
+  uint8_t b[16]; if (!SafeRead(b, (uintptr_t)at, 16)) return false;
+  hde64s hs; unsigned len = hde64_disasm(b, &hs); if (!len || (hs.flags & F_ERROR)) return false;
+  out.len = len; out.op = hs.opcode; out.modrm = hs.modrm; out.imm = hs.imm.imm32; out.mem = (hs.flags & F_MODRM) && hs.modrm_mod != 3;
+  out.disp = (hs.flags & F_DISP8) ? (int8_t)hs.disp.disp8 : (hs.flags & F_DISP16) ? (int16_t)hs.disp.disp16 : (hs.flags & F_DISP32) ? (int32_t)hs.disp.disp32 : 0; return true;
+}
 void InitUObj() {
   bool loud; { std::lock_guard<std::mutex> l(g_gm); loud = g_gate.Loud(GetTickCount64(), 30000); }
-  if (!g_fnToString) g_fnToString = SigFind(H->base, SIG_FNAME_TOSTRING);
-  if (!g_fnCtor) g_fnCtor = SigFind(H->base, SIG_FNAME_CTOR);
-  if (!g_arr) g_arr = SigFind(H->base, SIG_GUOBJECTARRAY, SIG_GUOBJECTARRAY_RIP);
-  static uintptr_t conMgr; if (!conMgr) conMgr = SigFind(H->base, SIG_GCONSOLEMANAGER, SIG_GCONSOLEMANAGER_RIP);
   g_ok = false;
-  if (loud) LOG("sig rva: GUObjectArray 0x%llx FName::ToString 0x%llx FName ctor 0x%llx GConsoleManager 0x%llx", g_arr ? g_arr - H->base : 0, g_fnToString ? g_fnToString - H->base : 0, g_fnCtor ? g_fnCtor - H->base : 0, conMgr ? conMgr - H->base : 0);
-  if (!g_arr || !g_fnToString || !g_fnCtor) {
-    SetWhy(std::string("signature scan failed for") + (g_arr ? "" : " GUObjectArray") + (g_fnToString ? "" : " FName::ToString") + (g_fnCtor ? "" : " FName ctor"));
-    if (loud) LOG("signature scan failed, UObject access off"); return;
+  if (!g_arr || !g_blocks) ScanGlobals(loud);
+  if (!g_arr || !g_blocks) {
+    SetWhy(std::string("not found yet:") + (g_arr ? "" : " GUObjectArray") + (g_blocks ? "" : " FNamePool"));
+    if (loud) LOG("engine globals not found yet, UObject access off"); return;
   }
   int num = Rd<int>(g_arr + 0x24), maxe = Rd<int>(g_arr + 0x20);
   if (loud) LOG("GUObjectArray 0x%llx num=%d max=%d chunks=0x%llx", g_arr, num, maxe, RdP(g_arr + 0x10));
@@ -922,11 +941,26 @@ void InitUObj() {
   }
   LOG("FField layout: found=%d name@0x%x next@0x%x dim@0x%x elem@0x%x flags@0x%x offset@0x%x sizeof=0x%x", found, FF_NAME, FF_NEXT, P_ARRAYDIM, P_ELEMSIZE, P_FLAGS, P_OFFSET, P_SIZE);
   g_ok = found;
-  if (!found) SetWhy("FField layout not found");
-  else { std::lock_guard<std::mutex> l(g_gm); g_why.clear(); g_gate.Reset(); }
+  if (!found) { SetWhy("FField layout not found"); return; }
+  if (PE_VSLOT < 0) {
+    uintptr_t cdo = FindFirst([](uintptr_t o) { return ObjName(o) == "Default__Object"; });
+    DetectFuncOff();
+    std::vector<int> cands; int slot = cdo && g_flagsOff >= 0 ? ues::FindProcessEventSlot(SafeRd, DecodeInsn, RdP(cdo), TextBeg(), TextEnd(), g_flagsOff, &cands) : -1;
+    std::string cs; for (int c : cands) cs += Fmt("%s%d", cs.empty() ? "" : ",", c);
+    LOG("ProcessEvent: Default__Object 0x%llx flags@0x%x slot %d (candidates %s)", cdo, g_flagsOff, slot, cs.c_str());
+    if (slot < 0) { g_ok = false; SetWhy("ProcessEvent vtable slot not found"); return; }
+    PE_VSLOT = slot * 8;
+    if (H->version >= 2 && H->hookPump) LOG("game-thread pump on ProcessEvent: %d", H->hookPump((void*)RdP(RdP(cdo) + PE_VSLOT)));
+  }
+  { std::lock_guard<std::mutex> l(g_gm); g_why.clear(); g_gate.Reset(); }
 }
+bool UObjReady() { return g_ok; }
+int ProcessEventSlot() { return PE_VSLOT < 0 ? -1 : PE_VSLOT / 8; }
 
+static std::mutex g_initM;
 static bool EnsureUObj(std::string& why) {
+  if (g_ok) return true;
+  std::lock_guard<std::mutex> lk(g_initM);
   if (g_ok) return true;
   uint64_t now = GetTickCount64();
   { std::lock_guard<std::mutex> l(g_gm);
@@ -937,3 +971,5 @@ static bool EnsureUObj(std::string& why) {
   why = "error: " + (w.empty() ? std::string("reflection not initialised") : w); return false;
 }
 
+
+bool TryUObj(std::string& why) { return EnsureUObj(why); }

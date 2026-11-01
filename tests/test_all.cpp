@@ -15,6 +15,7 @@
 #include <thread>
 #include <atomic>
 #include <stdio.h>
+#include "../src/ue_scan.h"
 
 extern HostApi g_testApi;
 extern std::vector<std::string> g_testLog;
@@ -240,6 +241,64 @@ static void TestPlugRestore() {
   auto m = plr::Missing({ "a", "b", "c" }, { "b" }); CHECK(m.size() == 2 && m[0] == "a" && m[1] == "c");
 }
 
+struct FakeMem {
+  std::map<uint64_t, std::vector<uint8_t>> r;
+  uint8_t* At(uint64_t a, size_t n) { for (auto& kv : r) if (a >= kv.first && a + n <= kv.first + kv.second.size()) return kv.second.data() + (a - kv.first); return nullptr; }
+  void Put(uint64_t a, const void* p, size_t n) { memcpy(At(a, n), p, n); }
+  template <class T> void Put(uint64_t a, T v) { Put(a, &v, sizeof v); }
+  ues::ReadFn Fn() { return [this](uint64_t a, void* o, size_t n) { uint8_t* p = At(a, n); if (!p) return false; memcpy(o, p, n); return true; }; }
+};
+static void PutEntry(FakeMem& m, uint64_t at, const char* s, bool wide = false) {
+  uint16_t len = (uint16_t)strlen(s), h = (uint16_t)((len << 6) | (wide ? 1 : 0)); m.Put(at, h);
+  for (uint16_t i = 0; i < len; i++) { if (wide) m.Put<uint16_t>(at + 2 + i * 2, (uint16_t)s[i]); else m.Put<uint8_t>(at + 2 + i, (uint8_t)s[i]); }
+}
+static void TestUeScan() {
+  FakeMem m; m.r[0x1000] = std::vector<uint8_t>(0x200); m.r[0x100000] = std::vector<uint8_t>(0x100); m.r[0x200000] = std::vector<uint8_t>(0x200); m.r[0x300000] = std::vector<uint8_t>(0x800); m.r[0x400000] = std::vector<uint8_t>(0x100);
+  uint64_t arr = 0x1000 + 0x40;
+  m.Put<uint64_t>(arr + 0x10, 0x100000); m.Put<int>(arr + 0x20, 0x20000); m.Put<int>(arr + 0x24, 5); m.Put<int>(arr + 0x28, 2); m.Put<int>(arr + 0x2C, 1);
+  m.Put<uint64_t>(0x100000, 0x200000);
+  for (int i = 0; i < 5; i++) { m.Put<uint64_t>(0x200000 + i * 24, 0x300000 + i * 0x100); m.Put<int>(0x300000 + i * 0x100 + 0xC, i); }
+  auto rd = m.Fn();
+  auto h = ues::FindObjArray(m.At(0x1000, 0x200), 0x200, 0x1000, rd);
+  CHECK(h.va == arr && h.num == 5 && h.max == 0x20000 && h.stride == 24);
+  m.Put<int>(arr + 0x28, 3); CHECK(ues::FindObjArray(m.At(0x1000, 0x200), 0x200, 0x1000, rd).va == 0); m.Put<int>(arr + 0x28, 2);
+  m.Put<int>(arr + 0x2C, 2); CHECK(ues::FindObjArray(m.At(0x1000, 0x200), 0x200, 0x1000, rd).va == arr); m.Put<int>(arr + 0x2C, 3); CHECK(ues::FindObjArray(m.At(0x1000, 0x200), 0x200, 0x1000, rd).va == 0); m.Put<int>(arr + 0x2C, 1);
+  m.Put<int>(0x300000 + 2 * 0x100 + 0xC, 7); CHECK(ues::FindObjArray(m.At(0x1000, 0x200), 0x200, 0x1000, rd).va == 0); m.Put<int>(0x300000 + 2 * 0x100 + 0xC, 2);
+  PutEntry(m, 0x400000, "None"); PutEntry(m, 0x400006, "ByteProperty"); PutEntry(m, 0x400014, "Actor"); PutEntry(m, 0x40001C, "Ab", true);
+  uint64_t blocks = 0x1000 + 0x100; m.Put<uint64_t>(blocks, 0x400000); m.Put<uint32_t>(blocks - 8, 0);
+  CHECK(ues::FindNameBlocks(m.At(0x1000, 0x200), 0x200, 0x1000, rd) == blocks);
+  std::string s;
+  CHECK(ues::NameAt(rd, blocks, 0, s) && s == "None");
+  CHECK(ues::NameAt(rd, blocks, 3, s) && s == "ByteProperty");
+  CHECK(ues::NameAt(rd, blocks, 10, s) && s == "Actor");
+  CHECK(ues::NameAt(rd, blocks, 14, s) && s == "Ab");
+  CHECK(!ues::NameAt(rd, blocks, 1u << 16, s));
+  std::unordered_map<std::string, uint32_t> pool; ues::IndexPool(rd, blocks, pool);
+  CHECK(pool.size() == 4 && pool["actor"] == 10 && pool["ab"] == 14);
+  uint64_t fn = 0;
+  CHECK(ues::LookupName(pool, "ACTOR", fn) && fn == 10);
+  CHECK(ues::LookupName(pool, "Actor_5", fn) && fn == (10ull | (6ull << 32)));
+  CHECK(ues::LookupName(pool, "Actor_0", fn) && fn == (10ull | (1ull << 32)));
+  CHECK(!ues::LookupName(pool, "Actor_05", fn) && !ues::LookupName(pool, "Nope", fn) && !ues::LookupName(pool, "Actor_", fn));
+  uint64_t vt = 0x400080; for (int i = 0; i < 4; i++) m.Put<uint64_t>(vt + i * 8, 0x7000 + i * 0x100); m.Put<uint64_t>(vt + 32, 0);
+  ues::DecodeFn dec = [](uint64_t at, ues::Insn& i) {
+    i = {}; i.len = 4;
+    if (at == 0x7200 + 8) { i.op = 0xF7; i.mem = true; i.modrm = 0x80; i.imm = 0x400; i.disp = 0xB0; }
+    else if (at == 0x7100 + 8) { i.op = 0xF7; i.mem = false; i.modrm = 0xC0; i.imm = 0x400; i.disp = 0xB0; }
+    else if ((at & 0xFF) >= 0x40) i.op = 0xCC; else i.op = 0x90;
+    return true; };
+  std::vector<int> c;
+  CHECK(ues::FindProcessEventSlot(rd, dec, vt, 0x7000, 0x8000, 0xB0, &c) == 2 && c.size() == 1 && c[0] == 2);
+  CHECK(ues::FindProcessEventSlot(rd, dec, vt, 0x7000, 0x7200, 0xB0) == -1);
+  CHECK(ues::FindProcessEventSlot(rd, dec, vt, 0x7000, 0x8000, 0x88) == -1);
+  ues::DecodeFn decB = [](uint64_t at, ues::Insn& i) {
+    i = {}; i.len = 4;
+    if (at == 0x7300 + 8) { i.op = 0xF6; i.mem = true; i.modrm = 0x83; i.imm = 4; i.disp = 0xB1; }
+    else if (at == 0x7100 + 8) { i.op = 0xF6; i.mem = true; i.modrm = 0x83; i.imm = 4; i.disp = 0x31; }
+    else if ((at & 0xFF) >= 0x40) i.op = 0xCC; else i.op = 0x90;
+    return true; };
+  CHECK(ues::FindProcessEventSlot(rd, decB, vt, 0x7000, 0x8000, 0xB0) == 3);
+}
 static void TestHwHook() {
   hwh::Slot s[4]; s[0].used = true; s[0].hookId = 7; s[1].used = true; s[2].used = true; s[2].hookId = 9; s[3].hookId = 5;
   CHECK(hwh::Pick(s, 4, -1) == 0x5u && hwh::Count(hwh::Pick(s, 4, -1)) == 2);
@@ -401,7 +460,7 @@ int main(int argc, char** argv) {
   SetEnvironmentVariableA("UESCAN_PORT", "27999");
   g_testApi.base = (uintptr_t)GetModuleHandleA(nullptr); g_testApi.gameThreadId = GetCurrentThreadId();
   H = &g_testApi;
-  TestJsonOut(); TestAgg(); TestChunk(); TestSampler(); TestWalk(); TestDetour(); TestStats(); TestUopt(); TestMemdiff(); TestRetry(); TestPose(); TestContainers(); TestPlugRestore(); TestHwHook();
+  TestJsonOut(); TestAgg(); TestChunk(); TestSampler(); TestWalk(); TestDetour(); TestStats(); TestUopt(); TestMemdiff(); TestRetry(); TestPose(); TestContainers(); TestPlugRestore(); TestHwHook(); TestUeScan();
   printf("unit: %d pass, %d fail\n", g_pass, g_fail);
   if (argc > 2 && !strcmp(argv[1], "--scenario")) {
     CoreInit(&g_testApi);

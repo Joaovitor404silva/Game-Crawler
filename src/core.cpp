@@ -97,6 +97,8 @@ extern "C" __declspec(dllexport) void CoreTick() {
 static uintptr_t g_textBeg, g_textEnd, g_imgEnd;
 bool InModule(uintptr_t a) { return a >= H->base && a < g_imgEnd; }
 bool InText(uintptr_t a) { return a >= g_textBeg && a < g_textEnd; }
+uintptr_t TextBeg() { return g_textBeg; }
+uintptr_t TextEnd() { return g_textEnd; }
 
 static bool ParseExpr(const char*& p, uint64_t& v, std::string& err);
 bool LookupName(const std::string& n, uintptr_t& a);
@@ -271,7 +273,7 @@ static const char* HELP =
 
 typedef uint64_t(__fastcall* X4)(uint64_t, uint64_t, uint64_t, uint64_t);
 static int SafeXCall(uintptr_t f, const uint64_t* a, uint64_t* r) { __try { *r = ((X4)f)(a[0], a[1], a[2], a[3]); return 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return (int)GetExceptionCode(); } }
-static uintptr_t GConsoleManagerAddr() { static uintptr_t a = SigFind(H->base, SIG_GCONSOLEMANAGER, SIG_GCONSOLEMANAGER_RIP); return a; }
+static uintptr_t GConsoleManagerAddr() { return 0; }
 struct FStrRaw { wchar_t* d; int n, m; };
 static uintptr_t FindCVar(const std::string& name) {
   uintptr_t cm = GConsoleManagerAddr() ? RdP(GConsoleManagerAddr()) : 0; if (!cm) return 0;
@@ -411,6 +413,11 @@ extern "C" __declspec(dllexport) void CoreHandle(const char* line, EmitFn emit, 
   emit(ctx, out.c_str());
 }
 
+static HANDLE g_warm; static volatile LONG g_warmStop;
+static DWORD WINAPI WarmThread(LPVOID) {
+  while (!g_warmStop && !UObjReady()) { std::string w; TryUObj(w); for (int i = 0; i < 10 && !g_warmStop; i++) Sleep(100); }
+  return 0;
+}
 extern "C" __declspec(dllexport) int CoreInit(HostApi* api) {
   H = api;
   auto nt = (IMAGE_NT_HEADERS*)(H->base + ((IMAGE_DOS_HEADER*)H->base)->e_lfanew);
@@ -419,7 +426,8 @@ extern "C" __declspec(dllexport) int CoreInit(HostApi* api) {
   for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) if (!memcmp(sec[i].Name, ".text", 5)) { g_textBeg = H->base + sec[i].VirtualAddress; g_textEnd = g_textBeg + sec[i].Misc.VirtualSize; }
   LoadNatives();
   LOG("names.tsv: %d entries", LoadNames());
-  InitUObj();
+  { std::string w; TryUObj(w); }
+  g_warmStop = 0; g_warm = CreateThread(nullptr, 0, WarmThread, nullptr, 0, nullptr);
   InitHooks();
   InitPlugins();
   InitProbe();
@@ -428,6 +436,7 @@ extern "C" __declspec(dllexport) int CoreInit(HostApi* api) {
 }
 
 extern "C" __declspec(dllexport) void CoreShutdown() {
+  InterlockedExchange(&g_warmStop, 1); if (g_warm) { WaitForSingleObject(g_warm, 10000); CloseHandle(g_warm); g_warm = nullptr; }
   ShutdownProbe();
   ShutdownPlugins();
   ShutdownHooks();

@@ -9,9 +9,14 @@ bool InText(uintptr_t a);
 std::string Sym(uintptr_t a);
 std::string ModOf(uintptr_t a);
 int SafeProcessEvent(void* fn, void* obj, void* func, void* params);
-bool SafeNameToString(void* fn, const void* name, void* outFString);
+
 
 void InitUObj();
+bool TryUObj(std::string& why);
+bool UObjReady();
+int ProcessEventSlot();
+uintptr_t TextBeg();
+uintptr_t TextEnd();
 void TickWatches();
 uintptr_t ResolveObj(const std::string& s);
 size_t ObjSize(uintptr_t a);

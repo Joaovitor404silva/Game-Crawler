@@ -9,6 +9,7 @@ struct HostApi {
   uint64_t tickCount;
   void* engineThis;
   DWORD gameThreadId;
+  int (*hookPump)(void* target);
 };
 typedef int  (*CoreInitFn)(HostApi*);
 typedef void (*CoreShutdownFn)();

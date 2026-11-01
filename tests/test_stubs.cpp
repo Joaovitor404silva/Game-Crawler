@@ -10,6 +10,9 @@ static void TestLog(const char* fmt, ...) {
 HostApi g_testApi = { 1, TestLog, 0, 0, nullptr, 0 };
 
 void InitUObj() {}
+bool TryUObj(std::string& why) { why = "no reflection in tests"; return false; }
+bool UObjReady() { return true; }
+int ProcessEventSlot() { return -1; }
 void TickWatches() {}
 uintptr_t ResolveObj(const std::string&) { return 0; }
 std::string DescribeObj(uintptr_t) { return ""; }

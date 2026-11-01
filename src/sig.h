@@ -5,17 +5,6 @@
 #include <string.h>
 #include <vector>
 
-#define SIG_TICK "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC E8 00 00 00 0F 29 BC 24 D0 00 00 00 0F 29 B4 24 C0 00 00 00 44 89 C3 0F 28 F1"
-#define SIG_FNAME_TOSTRING "41 57 41 56 41 54 56 57 55 53 48 81 EC 30 08 00 00 48 89 D6 48 89 CF 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 84 24 28 08 00 00 83 79 04 00"
-#define SIG_FNAME_CTOR "41 57 41 56 56 57 53 48 81 EC 40 04 00 00 48 89 CE 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 84 24 38 04 00 00 B1 01"
-#define SIG_GUOBJECTARRAY "03 0D ?? ?? ?? ?? 8B 15 ?? ?? ?? ??"
-#define SIG_GUOBJECTARRAY_RIP 2
-#define SIG_GCONSOLEMANAGER "48 8B 0D ?? ?? ?? ?? EB 9E 48 8B 10"
-#define SIG_GCONSOLEMANAGER_RIP 3
-#define SIG_SM "48 31 E0 48 89 84 24 80 00 00 00 48 8B 1D ?? ?? ?? ?? BE FF FF FF FF 48 85 DB 74 78 48 89 CF 48 8B 05"
-#define SIG_SM_RIP 14
-#define SIG_NAMEPOOL "41 8B 55 00 48 8D 35 ?? ?? ?? ?? 48 89 F1 E8 ?? ?? ?? ?? 31 DB 41 89 5D 00 8B 17 48 89 F1 E8"
-#define SIG_NAMEPOOL_RIP 7
 
 inline bool SigText(uintptr_t base, uintptr_t* s, size_t* n) {
   if (!base) return false;

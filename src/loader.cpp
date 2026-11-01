@@ -8,7 +8,7 @@
 #include "api.h"
 #include "home.h"
 #include "minhook/include/MinHook.h"
-#include "sig.h"
+#include <tlhelp32.h>
 #pragma comment(lib, "ws2_32.lib")
 
 static const std::string& LogPathS() { static std::string p = UEnv("UESCAN_LOGDIR", UEHome()) + "\\uescan.log"; return p; }
@@ -26,8 +26,12 @@ static CoreShutdownFn g_coreShutdown;
 static CoreHandleFn g_coreHandle;
 static CoreTickFn g_coreTick;
 static int g_coreGen;
-typedef void(__fastcall* TickFn)(void*, float, bool);
-static TickFn g_origTick;
+typedef void(__fastcall* PEFn)(void*, void*, void*);
+static PEFn g_origPE;
+static void* g_peTarget;
+static DWORD g_mainTid;
+static LONGLONG g_lastPump, g_pumpGap;
+static bool g_inPump;
 
 static void Log(const char* fmt, ...) {
   char buf[4096];
@@ -48,13 +52,38 @@ static int SafeInit(CoreInitFn f, HostApi* a) { __try { return f(a); } __except 
 static bool SafeHandle(CoreHandleFn f, const char* l, EmitFn e, void* c) { __try { f(l, e, c); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
 static void SafeShutdown(CoreShutdownFn f) { __try { f(); } __except (EXCEPTION_EXECUTE_HANDLER) { Log("core shutdown exception"); } }
 
-static void __fastcall HkTick(void* self, float dt, bool idle) {
-  g_api.tickCount++; g_api.engineThis = self; g_api.gameThreadId = GetCurrentThreadId();
+static void Pump() {
+  g_api.tickCount++;
   if (TryAcquireSRWLockShared(&g_coreLock)) {
     if (g_coreTick) { __try { g_coreTick(); } __except (EXCEPTION_EXECUTE_HANDLER) { Log("core tick exception %08x", GetExceptionCode()); } }
     ReleaseSRWLockShared(&g_coreLock);
   }
-  g_origTick(self, dt, idle);
+}
+static void __fastcall HkPE(void* obj, void* fn, void* parms) {
+  if (!g_inPump && GetCurrentThreadId() == g_mainTid) {
+    LARGE_INTEGER now; QueryPerformanceCounter(&now);
+    if (now.QuadPart - g_lastPump >= g_pumpGap) { g_lastPump = now.QuadPart; g_inPump = true; Pump(); g_inPump = false; }
+  }
+  g_origPE(obj, fn, parms);
+}
+static int HookPump(void* target) {
+  if (g_peTarget) return g_peTarget == target ? 1 : -2;
+  MH_STATUS a = MH_CreateHook(target, (void*)HkPE, (void**)&g_origPE), b = a == MH_OK ? MH_EnableHook(target) : a;
+  Log("ProcessEvent pump at %p: create=%d enable=%d main thread %lu", target, a, b, g_mainTid);
+  if (b != MH_OK) return -1;
+  g_peTarget = target; return 1;
+}
+static DWORD MainThreadId() {
+  DWORD pid = GetCurrentProcessId(), best = 0; ULONGLONG bt = ~0ull;
+  HANDLE sn = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0); if (sn == INVALID_HANDLE_VALUE) return 0;
+  THREADENTRY32 te{ sizeof te };
+  for (BOOL ok = Thread32First(sn, &te); ok; ok = Thread32Next(sn, &te)) {
+    if (te.th32OwnerProcessID != pid) continue;
+    HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID); if (!h) continue;
+    FILETIME c, e, k, u; if (GetThreadTimes(h, &c, &e, &k, &u)) { ULONGLONG t = ((ULONGLONG)c.dwHighDateTime << 32) | c.dwLowDateTime; if (t && t < bt) { bt = t; best = te.th32ThreadID; } }
+    CloseHandle(h);
+  }
+  CloseHandle(sn); return best;
 }
 
 static void UnloadCoreLocked() {
@@ -119,11 +148,9 @@ static DWORD WINAPI ClientThread(LPVOID p) {
 
 static DWORD WINAPI MainThread(LPVOID) {
   Log("UE Scanner loader start pid=%lu base=0x%llx", GetCurrentProcessId(), (unsigned long long)g_api.base);
-  if (MH_Initialize() == MH_OK) {
-    void* t = (void*)SigFind(g_api.base, SIG_TICK);
-    MH_STATUS a = t ? MH_CreateHook(t, (void*)HkTick, (void**)&g_origTick) : MH_ERROR_NOT_EXECUTABLE, b = a == MH_OK ? MH_EnableHook(t) : a;
-    Log("GameEngine::Tick hook at %p: create=%d enable=%d", t, a, b);
-  }
+  Log("MinHook init %d", MH_Initialize());
+  g_mainTid = MainThreadId(); g_api.gameThreadId = g_mainTid;
+  LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_pumpGap = f.QuadPart / 500;
   LoadCore();
   char ps[16]; if (GetEnvironmentVariableA("UESCAN_PORT", ps, sizeof ps)) { int p = atoi(ps); if (p > 0 && p < 65536) PORT = p; }
   WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
@@ -142,7 +169,11 @@ BOOL APIENTRY DllMain(HMODULE m, DWORD reason, LPVOID) {
   if (reason == DLL_PROCESS_ATTACH) {
     DisableThreadLibraryCalls(m);
     InitializeCriticalSection(&g_logCs); InitializeCriticalSection(&g_cmdCs);
-    g_api.version = 1; g_api.log = Log; g_api.base = (uintptr_t)GetModuleHandleA(nullptr);
+    g_api.version = 2; g_api.log = Log; g_api.base = (uintptr_t)GetModuleHandleA(nullptr); g_api.hookPump = HookPump;
+    char hv[8]; if (!GetEnvironmentVariableA("UESCAN_HOME", hv, sizeof hv)) {
+      char p[MAX_PATH]; DWORD n = GetModuleFileNameA(m, p, MAX_PATH);
+      if (n && n < MAX_PATH) { for (int k = 0; k < 2; k++) { char* sl = strrchr(p, '\\'); if (sl) *sl = 0; } SetEnvironmentVariableA("UESCAN_HOME", p); }
+    }
     HANDLE h = CreateThread(nullptr, 0, MainThread, nullptr, 0, nullptr); if (h) CloseHandle(h);
   }
   return TRUE;

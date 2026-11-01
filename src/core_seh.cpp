@@ -25,12 +25,6 @@ bool SafeWrite(uintptr_t dst, const void* src, size_t n) {
 }
 
 typedef void(__fastcall* PEFn)(void*, void*, void*);
-#include "s2n_peframe.h"
 int SafeProcessEvent(void* fn, void* obj, void* func, void* params) {
-  uintptr_t pf0 = s2n_pf::save(); s2n_pf::g_on = 1;
-  __try { ((PEFn)fn)(obj, func, params); return 0; } __except (EXCEPTION_EXECUTE_HANDLER) { s2n_pf::fix(pf0); return (int)GetExceptionCode(); }
-}
-typedef void(__fastcall* ToStrFn)(const void* name, void* out);
-bool SafeNameToString(void* fn, const void* name, void* outFString) {
-  __try { ((ToStrFn)fn)(name, outFString); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+  __try { ((PEFn)fn)(obj, func, params); return 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return (int)GetExceptionCode(); }
 }
