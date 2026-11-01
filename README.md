@@ -16,8 +16,8 @@ No per-game signatures. On start it finds `GUObjectArray` and the `FNamePool` by
 the FField / UFunction layout from known engine classes, and finds the `ProcessEvent` vtable slot from `Default__Object`.
 
 > **Single-player dev tool.** It never modifies your game install: it builds a separate dev folder made of links to the game
-> files and puts the proxy there. Tested on S.T.A.L.K.E.R. 2 (UE 5.5). Other engine versions and custom engine forks may need
-> fixes. Unofficial, offline use only, at your own risk; read the [Disclaimer](#disclaimer).
+> files and puts the proxy there. Tested on S.T.A.L.K.E.R. 2 (UE 5.5), Backseat Drivers (UE 5) and Deep Rock Galactic
+> (UE 4.27). Other engine versions and custom engine forks may need fixes. Unofficial, offline use only, at your own risk; read the [Disclaimer](#disclaimer).
 
 ---
 
