@@ -17,6 +17,10 @@ typedef struct UEApi {
   int (*call)(uintptr_t obj, const char* func, const char* args, char* out, int n);
   int (*cmd)(const char* line, char* out, int n);
   uint64_t (*ticks)(void);
+  int (*read)(uintptr_t addr, void* out, size_t n);
+  uintptr_t (*sig)(const char* pattern, int rip);
+  const char* (*path)(const char* rel, char* buf, int n);
+  const char* (*describe)(uintptr_t obj, char* buf, int n);
 } UEApi;
 #ifdef __cplusplus
 }

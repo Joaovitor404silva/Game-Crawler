@@ -25,4 +25,6 @@ bool UPropAddr(const std::string&, const std::string&, uintptr_t&, int&, std::st
 void InitPlugins() {}
 void ShutdownPlugins() {}
 void TickPlugins() {}
-bool HandlePlugins(const std::string&, const std::vector<std::string>&, Out&) { return false; }
+bool HandlePlugins(const std::string&, const std::vector<std::string>&, Out&, const std::string&) { return false; }
+int PluginPreCall(uintptr_t*) { return 0; }
+void PluginCallFault(const uintptr_t*, int) {}

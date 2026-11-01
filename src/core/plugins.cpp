@@ -1,6 +1,7 @@
 #include "core.h"
 #include "home.h"
 #include "plug_restore.h"
+#include "sig.h"
 #include "../plugins/crawler_api.h"
 #include "minhook/include/MinHook.h"
 #include <map>
@@ -21,6 +22,8 @@ static const std::string& ODirS() { static std::string p = UEPath("bin\\plugins"
 struct Plugin {
   std::string name; HMODULE mod = nullptr; std::string shadow; int gen = 0;
   void (*shutdown)() = nullptr; void (*tick)() = nullptr;
+  int (*command)(const char*, char*, int) = nullptr; const char* (*help)() = nullptr;
+  uintptr_t (*preCall)() = nullptr; void (*callFault)(uintptr_t) = nullptr;
   uint64_t srcStamp = 0; std::string state = "new"; uint64_t tickExc = 0;
 };
 struct PHook { uintptr_t target; HMODULE owner; };
@@ -75,7 +78,21 @@ static int ApiCall(uintptr_t o, const char* fn, const char* args, char* out, int
   std::string r = RunCmd(Fmt("call 0x%llx %s %s", (unsigned long long)o, fn, args ? args : "")); Copy(r, out, n); return r.rfind("ok", 0) == 0 ? 1 : 0;
 }
 static uint64_t ApiTicks() { return H->tickCount; }
-static UEApi g_api = { 1, 0, ApiLog, ApiAddr, ApiSym, ApiHook, ApiUnhook, ApiFind, ApiGet, ApiSet, ApiCall, ApiCmd, ApiTicks };
+static int ApiRead(uintptr_t a, void* out, size_t n) { return SafeRead(out, a, n) ? 1 : 0; }
+static uintptr_t ApiSig(const char* pat, int rip) { return SigFind(H->base, pat, rip); }
+static const char* ApiPath(const char* rel, char* buf, int n) { strncpy_s(buf, n, UEPath(rel).c_str(), _TRUNCATE); return buf; }
+static const char* ApiDescribe(uintptr_t a, char* buf, int n) { strncpy_s(buf, n, DescribeObj(a).c_str(), _TRUNCATE); return buf; }
+static UEApi g_api = { 2, 0, ApiLog, ApiAddr, ApiSym, ApiHook, ApiUnhook, ApiFind, ApiGet, ApiSet, ApiCall, ApiCmd, ApiTicks, ApiRead, ApiSig, ApiPath, ApiDescribe };
+struct Guard { uintptr_t (*pre)(); void (*fault)(uintptr_t); };
+static Guard g_guards[8]; static volatile int g_nGuards;
+static void RebuildGuards() {
+  int n = 0; for (auto& kv : g_plugs) if (kv.second.mod && kv.second.preCall && kv.second.callFault && n < 8) g_guards[n++] = { kv.second.preCall, kv.second.callFault };
+  g_nGuards = n;
+}
+static uintptr_t SafePre(uintptr_t (*f)()) { __try { return f(); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; } }
+static void SafeFault(void (*f)(uintptr_t), uintptr_t v) { __try { f(v); } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+int PluginPreCall(uintptr_t* st) { int n = g_nGuards; for (int i = 0; i < n; i++) st[i] = SafePre(g_guards[i].pre); return n; }
+void PluginCallFault(const uintptr_t* st, int n) { for (int i = 0; i < n && i < g_nGuards; i++) SafeFault(g_guards[i].fault, st[i]); }
 
 static uint64_t SrcStamp(const std::string& name) {
   uint64_t best = 0; WIN32_FIND_DATAA fd;
@@ -114,7 +131,7 @@ static int PluginThreads(HMODULE m) {
 static void UnloadLocked(Plugin& p) {
   if (!p.mod) return;
   g_cur = p.name.c_str(); if (p.shutdown) SafeVoid(p.shutdown); g_cur = nullptr;
-  p.tick = nullptr; p.shutdown = nullptr;
+  p.tick = nullptr; p.shutdown = nullptr; p.command = nullptr; p.help = nullptr; p.preCall = nullptr; p.callFault = nullptr; RebuildGuards();
   int n = 0;
   for (auto it = g_phooks.begin(); it != g_phooks.end();) {
     if (it->owner == p.mod) { MH_DisableHook((void*)it->target); MH_RemoveHook((void*)it->target); it = g_phooks.erase(it); n++; } else ++it;
@@ -141,6 +158,11 @@ static std::string LoadLocked(Plugin& p) {
   g_cur = p.name.c_str(); bool iok = init && SafeInitPlug(init, rc); g_cur = nullptr;
   if (!iok || rc != 1) { p.state = init ? Fmt("init failed rc=%d", rc) : "no UEPluginInit"; UnloadLocked(p); return p.name + ": " + p.state; }
   p.tick = tick; p.state = Fmt("loaded gen %d", p.gen); p.tickExc = 0;
+  p.command = (int (*)(const char*, char*, int))GetProcAddress(p.mod, "UEPluginCommand");
+  p.help = (const char* (*)())GetProcAddress(p.mod, "UEPluginHelp");
+  p.preCall = (uintptr_t (*)())GetProcAddress(p.mod, "UEPluginPreCall");
+  p.callFault = (void (*)(uintptr_t))GetProcAddress(p.mod, "UEPluginCallFault");
+  RebuildGuards();
   LOG("[plug %s] loaded gen %d", p.name.c_str(), p.gen);
   return p.name + ": " + p.state;
 }
@@ -230,8 +252,23 @@ static std::string ReadFileStr(const std::string& f, size_t maxTail) {
   std::string d; char b[4096]; size_t k; while ((k = fread(b, 1, sizeof(b), fp)) > 0) d.append(b, k); fclose(fp);
   return d.size() > maxTail ? d.substr(d.size() - maxTail) : d;
 }
-bool HandlePlugins(const std::string& c, const std::vector<std::string>& t, Out& o) {
-  if (c != "plug") return false;
+static int SafeCommand(int (*f)(const char*, char*, int), const char* line, char* out, int n) { __try { return f(line, out, n); } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; } }
+static bool PluginCommand(const std::string& line, Out& o) {
+  std::vector<std::pair<std::string, int (*)(const char*, char*, int)>> cs;
+  { std::lock_guard<std::recursive_mutex> l(g_pm); for (auto& kv : g_plugs) if (kv.second.mod && kv.second.command) cs.push_back({ kv.first, kv.second.command }); }
+  if (cs.empty()) return false;
+  static std::mutex m; std::lock_guard<std::mutex> l(m);
+  static std::vector<char> buf(1 << 20);
+  for (auto& c : cs) {
+    buf[0] = 0; g_cur = c.first.c_str(); int r = SafeCommand(c.second, line.c_str(), buf.data(), (int)buf.size()); g_cur = nullptr;
+    if (r == 0) continue;
+    if (r < 0) { o.line("error: plugin " + c.first + " crashed in UEPluginCommand"); return true; }
+    std::string s(buf.data()); while (!s.empty() && s.back() == '\n') s.pop_back(); o.line(s); return true;
+  }
+  return false;
+}
+bool HandlePlugins(const std::string& c, const std::vector<std::string>& t, Out& o, const std::string& line) {
+  if (c != "plug") return PluginCommand(line, o);
   std::string sub = t.size() > 1 ? Lower(t[1]) : "list", n = t.size() > 2 ? t[2] : "";
   if (sub == "list") {
     std::lock_guard<std::recursive_mutex> l(g_pm);
@@ -239,6 +276,7 @@ bool HandlePlugins(const std::string& c, const std::vector<std::string>& t, Out&
       auto it = g_plugs.find(d); int hk = 0;
       if (it != g_plugs.end()) for (auto& h : g_phooks) hk += h.owner == it->second.mod && it->second.mod;
       o.f("%-20s %s hooks=%d tickExc=%llu", d.c_str(), it == g_plugs.end() ? "unknown" : it->second.state.c_str(), hk, it == g_plugs.end() ? 0ull : it->second.tickExc);
+      if (it != g_plugs.end() && it->second.mod && it->second.help) { const char* h = it->second.help(); if (h && *h) o.line(std::string("  commands: ") + h); }
     }
     o.f("watch %s (folder %s)", g_watchOn ? "on" : "off", PDIR);
     o.line(g_restoreMsg); return true;

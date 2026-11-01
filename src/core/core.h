@@ -27,7 +27,9 @@ bool HandleHooks(const std::string& c, const std::vector<std::string>& t, Out& o
 void InitPlugins();
 void ShutdownPlugins();
 void TickPlugins();
-bool HandlePlugins(const std::string& c, const std::vector<std::string>& t, Out& o);
+bool HandlePlugins(const std::string& c, const std::vector<std::string>& t, Out& o, const std::string& line);
+int PluginPreCall(uintptr_t* st);
+void PluginCallFault(const uintptr_t* st, int n);
 std::string CVarCmd(const std::string& name, const std::string* value);
 
 std::string FrameSym(uint64_t a, bool isReturn);

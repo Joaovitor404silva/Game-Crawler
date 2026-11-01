@@ -395,7 +395,7 @@ static void HandleText(const char* line, EmitFn emit, void* ctx) {
     auto h = Aob(rest(1), g_textBeg, g_textEnd, 32);
     for (auto x : h) o.f("0x%llx  %s", x, Sym(x).c_str()); o.f("%zu hits (max 32)", h.size());
   }
-  else if (!EngineHandle(c, t, L, o) && !HandleHooks(c, t, o) && !HandleProbe(c, t, L, o) && !HandleBot(c, t, o) && !HandlePlugins(c, t, o)) o.line(ActiveEngine() ? "unknown command (help)" : "unknown command (help); engine commands need a backend and none was detected (engine)");
+  else if (!EngineHandle(c, t, L, o) && !HandleHooks(c, t, o) && !HandleProbe(c, t, L, o) && !HandleBot(c, t, o) && !HandlePlugins(c, t, o, L)) o.line(ActiveEngine() ? "unknown command (help)" : "unknown command (help); engine commands need a backend and none was detected (engine)");
 }
 
 extern "C" __declspec(dllexport) void CoreHandle(const char* line, EmitFn emit, void* ctx) {

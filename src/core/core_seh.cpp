@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include <string.h>
 
+int PluginPreCall(uintptr_t* st);
+void PluginCallFault(const uintptr_t* st, int n);
+
 bool SafeRead(void* dst, uintptr_t src, size_t n) {
   if (src < 0x10000) return false;
   __try { memcpy(dst, (const void*)src, n); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -25,6 +28,12 @@ bool SafeWrite(uintptr_t dst, const void* src, size_t n) {
 }
 
 typedef void(__fastcall* PEFn)(void*, void*, void*);
-int SafeProcessEvent(void* fn, void* obj, void* func, void* params) {
+static int RawProcessEvent(void* fn, void* obj, void* func, void* params) {
   __try { ((PEFn)fn)(obj, func, params); return 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return (int)GetExceptionCode(); }
+}
+int SafeProcessEvent(void* fn, void* obj, void* func, void* params) {
+  uintptr_t st[8]; int n = PluginPreCall(st);
+  int r = RawProcessEvent(fn, obj, func, params);
+  if (r && n) PluginCallFault(st, n);
+  return r;
 }

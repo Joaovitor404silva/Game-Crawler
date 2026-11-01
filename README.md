@@ -139,9 +139,36 @@ API (`plugins/crawler_api.h`):
 | `get` / `set` / `call` | Property as text / write a property / call a UFunction (queued to the game thread, up to 5 s) |
 | `cmd(line, out, n)` | Run any Game Crawler command |
 | `ticks()` | Game-thread pump counter |
+| `read(a, out, n)` | Fault-safe memory read (1 = ok) |
+| `sig(pattern, rip)` | Byte signature in the exe code (`"48 8B ?? ..."`); `rip` >= 0 resolves a RIP-relative operand at that offset; 0 = not found |
+| `path(rel, buf, n)` | Absolute path under the Game Crawler folder |
+| `describe(a, buf, n)` | `Class /path` of an engine object, empty if `a` is not one |
 
-Exports: `UEPluginInit` (required, return 1 = ok), `UEPluginTick` (optional, game thread), `UEPluginShutdown` (optional). A
-plugin that starts threads must stop and join them in `UEPluginShutdown`. Wrap risky pointer reads in `__try` / `__except`.
+Exports (all but `UEPluginInit` optional):
+
+| Export | Meaning |
+|---|---|
+| `int UEPluginInit(const UEApi*)` | Return 1 = ok. `api->version` is 2 |
+| `void UEPluginTick()` | Called on the game thread |
+| `void UEPluginShutdown()` | Stop and join any threads the plugin started |
+| `int UEPluginCommand(const char* line, char* out, int n)` | New commands: return 1 and write the reply to `out` if the line is yours, 0 otherwise. Commands Game Crawler does not know are offered to every plugin, so they work from the CLI, `raw` and MCP |
+| `const char* UEPluginHelp()` | One line listing the plugin's commands, shown by `plug list` |
+| `uintptr_t UEPluginPreCall()` / `void UEPluginCallFault(uintptr_t)` | Guard around every UFunction call Game Crawler makes: the value returned before the call is handed back if the call faults, to repair game state |
+
+Wrap risky pointer reads in `__try` / `__except` or use `read`.
+
+**MCP tools from a plugin.** `plugins\<name>\mcp.js` is loaded by the MCP server at start. It exports a function that gets the
+server helpers and returns tool rows:
+
+```js
+module.exports = ({ S, str, int, OBJ, cmd }) => [
+  ['hello', 'Say hello from the example plugin.', S({ name: str('who') }), a => cmd('hello', a.name)],
+];
+```
+
+**Plugins in their own repo.** Clone (or link) a plugin repo into `plugins\<name>`; only `plugins\example` is tracked here.
+[Anomaly Scanner](https://github.com/Joaovitor404silva/Anomaly-Scanner) is one: S.T.A.L.K.E.R. 2 quest graph, NPC census and a
+scripted player bot on top of Game Crawler.
 
 ## Names database and decompile (optional)
 

@@ -31,3 +31,5 @@ names/
 decomp/
 sdk/
 bench/
+plugins/*/
+!plugins/example/

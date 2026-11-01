@@ -191,6 +191,13 @@ const tools = [
   ['reload_core', 'Hot reload GameCrawlerCore.dll after `src\\build.bat core`.', S({}), () => game('reload')],
   ['raw', 'Run any Game Crawler CLI command line verbatim (see `help`).', S({ command: str('e.g. help, aob 48 8B ?? 20, uinfo') }, ['command']), a => game(a.command)],
 ];
+const PLUG = path.join(HOME, 'plugins');
+for (const d of fs.existsSync(PLUG) ? fs.readdirSync(PLUG) : []) {
+  const f = path.join(PLUG, d, 'mcp.js');
+  if (!fs.existsSync(f)) continue;
+  try { for (const t of require(f)({ S, str, int, OBJ, cmd, game })) if (!tools.some(x => x[0] === t[0])) tools.push(t); }
+  catch (e) { process.stderr.write('plugin ' + d + ' mcp.js: ' + e.message + '\n'); }
+}
 for (const t of tools) if (t[2] && t[2].properties) { t[2].properties.game = { type: 'string', description: 'which dev game: B client (default), A host, D client 2, C host 2, E client 3, all (run on every port, one section each), or a port. Applied per call, no reconnect needed.' };
   t[2].properties.json = { type: 'boolean', description: 'ask the game for structured JSON ({ok,cmd,port,ms,data,lines}) instead of text' };
   t[2].properties.out_file = { type: 'string', description: 'write the FULL output (no size cap) to this file path; the reply is the path + a preview' }; }
