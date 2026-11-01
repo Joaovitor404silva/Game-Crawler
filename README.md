@@ -25,7 +25,7 @@ the FField / UFunction layout from known engine classes, and finds the `ProcessE
 
 | Piece | Role |
 |---|---|
-| `src/make_devroot.ps1` | Builds the dev folder (default `C:\UEScanRoot\<game>`): junctions and hardlinks to the install, the `version.dll` proxy in `Binaries\Win64`, no other proxy DLLs (UE4SS, dxgi, dinput8, ...), no `Mods`/`~mods`/`LogicMods`, no `Saved`. Idempotent. |
+| `src/make_devroot.ps1` | Builds the dev folder (default `C:\UEScanRoot\<game>`): junctions and hardlinks to the install, the `version.dll` proxy in `Binaries\Win64`, no other proxy DLLs (UE4SS, dxgi, dinput8, ...), no `Mods`/`~mods`/`LogicMods`, no `Saved`, plus `steam_appid.txt` for Steam games so they start outside Steam's launcher. Idempotent. |
 | `version.dll` (`src/proxy.cpp`) | Forwards every export to `System32\version.dll` and loads `bin\UEScanner.dll` from the folder in `UESCAN_HOME` or `uescan_home.txt`. |
 | `UEScanner.dll` (`src/loader.cpp`) | Loader: log, TCP server on `127.0.0.1:27060`, game-thread pump (hook on `ProcessEvent`, main thread only), hot reload of the core. |
 | `UEScannerCore.dll` (`src/core.cpp`, `ue.cpp`, `ue_scan.h`, `hooks.cpp`, `probe.cpp`, `plugins.cpp`) | Engine discovery and every command. Loaded from a shadow copy, so it can be rebuilt and reloaded while the game runs. |

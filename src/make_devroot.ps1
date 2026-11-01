@@ -37,6 +37,14 @@ Mirror $root $r
 $devWin64 = $win64.Replace($root, $r)
 Copy-Item "$PSScriptRoot\..\bin\proxy\version.dll" (Join-Path $devWin64 'version.dll') -Force
 Set-Content -Encoding ascii (Join-Path $devWin64 'uescan_home.txt') (Resolve-Path "$PSScriptRoot\..").Path
+$common = Split-Path $root
+if ((Split-Path $common -Leaf) -eq 'common' -and -not (Test-Path (Join-Path $win64 'steam_appid.txt'))) {
+  $inst = Split-Path $root -Leaf
+  foreach ($m in Get-ChildItem (Split-Path $common) -Filter 'appmanifest_*.acf') {
+    $t = Get-Content $m.FullName -Raw
+    if ($t -match '"installdir"\s+"([^"]+)"' -and $Matches[1] -eq $inst -and $t -match '"appid"\s+"(\d+)"') { Set-Content -Encoding ascii (Join-Path $devWin64 'steam_appid.txt') $Matches[1]; "steam appid: $($Matches[1])"; break }
+  }
+}
 Set-Content -Encoding ascii (Join-Path $r 'uescan_exe.txt') $Exe.Replace($root, $r)
 "devroot ok: $r"
 "exe: $($Exe.Replace($root, $r))"
