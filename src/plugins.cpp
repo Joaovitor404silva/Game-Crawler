@@ -1,7 +1,7 @@
 #include "core.h"
 #include "home.h"
 #include "plug_restore.h"
-#include "../plugins/uescan_api.h"
+#include "../plugins/crawler_api.h"
 #include "minhook/include/MinHook.h"
 #include <map>
 #include <mutex>
@@ -184,9 +184,9 @@ static DWORD WINAPI WatchThread(LPVOID) {
 
 void InitPlugins() {
   g_api.base = H->base; g_stop = false;
-  char rs[1024] = {}; GetEnvironmentVariableA("UESCAN_PLUG_RESTORE", rs, sizeof rs);
+  char rs[1024] = {}; GetEnvironmentVariableA("CRAWLER_PLUG_RESTORE", rs, sizeof rs);
   std::vector<std::string> want = plr::Split(rs);
-  char np[8]; bool noplug = GetEnvironmentVariableA("UESCAN_NOPLUG", np, sizeof np) && np[0] == '1';
+  char np[8]; bool noplug = GetEnvironmentVariableA("CRAWLER_NOPLUG", np, sizeof np) && np[0] == '1';
   if (noplug) g_watchOn = false;
   else {
     for (auto& n : ListPluginDirs()) {
@@ -216,7 +216,7 @@ void ShutdownPlugins() {
   std::lock_guard<std::recursive_mutex> l(g_pm);
   std::vector<std::string> was;
   for (auto& kv : g_plugs) if (kv.second.mod) was.push_back(kv.first);
-  SetEnvironmentVariableA("UESCAN_PLUG_RESTORE", plr::Join(was).c_str());
+  SetEnvironmentVariableA("CRAWLER_PLUG_RESTORE", plr::Join(was).c_str());
   for (auto& kv : g_plugs) UnloadLocked(kv.second);
   g_plugs.clear();
 }

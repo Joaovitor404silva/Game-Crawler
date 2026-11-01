@@ -10,7 +10,7 @@ $root = $win64
 while ($root -and -not (Test-Path (Join-Path $root 'Engine'))) { $root = Split-Path $root }
 if (-not $root) { throw "no Engine folder above $Exe; is this an Unreal Engine game?" }
 $name = Split-Path $root -Leaf
-if (-not $DevRoot) { $DevRoot = Join-Path 'C:\UEScanRoot' ($name -replace '[^A-Za-z0-9._-]', '_') }
+if (-not $DevRoot) { $DevRoot = Join-Path 'C:\GameCrawlerRoot' ($name -replace '[^A-Za-z0-9._-]', '_') }
 $r = $DevRoot.TrimEnd('\')
 if ($r -like "$root*") { throw 'DevRoot must be outside the game folder' }
 $skipFiles = 'dwmapi.dll', 'version.dll', 'dxgi.dll', 'winmm.dll', 'xinput1_3.dll', 'dinput8.dll', 'd3d11.dll', 'UE4SS.dll', 'UE4SS-settings.ini'
@@ -36,7 +36,7 @@ function Mirror($src, $dst) {
 Mirror $root $r
 $devWin64 = $win64.Replace($root, $r)
 Copy-Item "$PSScriptRoot\..\bin\proxy\version.dll" (Join-Path $devWin64 'version.dll') -Force
-Set-Content -Encoding ascii (Join-Path $devWin64 'uescan_home.txt') (Resolve-Path "$PSScriptRoot\..").Path
+Set-Content -Encoding ascii (Join-Path $devWin64 'crawler_home.txt') (Resolve-Path "$PSScriptRoot\..").Path
 $common = Split-Path $root
 if ((Split-Path $common -Leaf) -eq 'common' -and -not (Test-Path (Join-Path $win64 'steam_appid.txt'))) {
   $inst = Split-Path $root -Leaf
@@ -45,6 +45,6 @@ if ((Split-Path $common -Leaf) -eq 'common' -and -not (Test-Path (Join-Path $win
     if ($t -match '"installdir"\s+"([^"]+)"' -and $Matches[1] -eq $inst -and $t -match '"appid"\s+"(\d+)"') { Set-Content -Encoding ascii (Join-Path $devWin64 'steam_appid.txt') $Matches[1]; "steam appid: $($Matches[1])"; break }
   }
 }
-Set-Content -Encoding ascii (Join-Path $r 'uescan_exe.txt') $Exe.Replace($root, $r)
+Set-Content -Encoding ascii (Join-Path $r 'crawler_exe.txt') $Exe.Replace($root, $r)
 "devroot ok: $r"
 "exe: $($Exe.Replace($root, $r))"

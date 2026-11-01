@@ -26,11 +26,11 @@ void JsonSetData(const std::string& j) { t_jdata = j; }
 void JsonSetOk(bool ok) { t_jok = ok ? 1 : 0; }
 
 static int PortNum() {
-  char ps[16]; if (GetEnvironmentVariableA("UESCAN_PORT", ps, sizeof ps)) { int p = atoi(ps); if (p > 0 && p < 65536) return p; }
+  char ps[16]; if (GetEnvironmentVariableA("CRAWLER_PORT", ps, sizeof ps)) { int p = atoi(ps); if (p > 0 && p < 65536) return p; }
   return 27060;
 }
-std::string LogDir() { char d[MAX_PATH]; if (GetEnvironmentVariableA("UESCAN_LOGDIR", d, sizeof d)) return d; return UEHome(); }
-std::string PortLogPath() { return LogDir() + "\\uescan_" + std::to_string(PortNum()) + ".log"; }
+std::string LogDir() { char d[MAX_PATH]; if (GetEnvironmentVariableA("CRAWLER_LOGDIR", d, sizeof d)) return d; return UEHome(); }
+std::string PortLogPath() { return LogDir() + "\\crawler_" + std::to_string(PortNum()) + ".log"; }
 static SRWLOCK g_logLock = SRWLOCK_INIT;
 static FILE* g_logF; static long long g_logBytes;
 void CoreLogClose() { AcquireSRWLockExclusive(&g_logLock); if (g_logF) { fclose(g_logF); g_logF = nullptr; } ReleaseSRWLockExclusive(&g_logLock); }
@@ -71,7 +71,7 @@ static void TickAutoexec() {
   static std::vector<std::pair<std::string, std::string>> lines; static bool loaded; static uint64_t next = 300;
   if (H->tickCount < next) return; next = H->tickCount + 600;
   if (!loaded) {
-    loaded = true; char p[MAX_PATH]; if (!GetEnvironmentVariableA("UESCAN_AUTOEXEC", p, sizeof p)) return;
+    loaded = true; char p[MAX_PATH]; if (!GetEnvironmentVariableA("CRAWLER_AUTOEXEC", p, sizeof p)) return;
     FILE* f; if (fopen_s(&f, p, "rb")) { H->log("autoexec: cannot open %s", p); return; }
     char b[512]; while (fgets(b, sizeof b, f)) { std::string s = b; s = s.substr(0, s.find('#')); auto t = Tokenize(s); if (t.size() >= 2) lines.push_back({ t[0], t[1] }); }
     fclose(f); H->log("autoexec: %zu cvars from %s", lines.size(), p);
@@ -161,7 +161,7 @@ std::string ModOf(uintptr_t a) {
 struct NameTab { std::vector<std::pair<uint32_t, std::string>> v; std::map<std::string, uint32_t> byLower; };
 static NameTab* volatile g_names;
 static int LoadNames() {
-  FILE* f; if (fopen_s(&f, UEnv("UESCAN_NAMES", UEPath("names\\names.tsv")).c_str(), "rb")) return -1;
+  FILE* f; if (fopen_s(&f, UEnv("CRAWLER_NAMES", UEPath("names\\names.tsv")).c_str(), "rb")) return -1;
   NameTab* t = new NameTab; char line[1024];
   while (fgets(line, sizeof(line), f)) {
     char* p1 = strchr(line, '\t'); if (!p1) continue; char* p2 = strchr(p1 + 1, '\t'); if (!p2) continue; char* p3 = strchr(p2 + 1, '\t');
@@ -249,7 +249,7 @@ static std::string Callees(const std::string& in, const std::string& out) {
 }
 
 static void CmdLogTail(Out& o, int n) {
-  FILE* f; std::string lp = PortLogPath(); if (fopen_s(&f, lp.c_str(), "rb") && fopen_s(&f, (LogDir() + "\\uescan.log").c_str(), "rb")) { o.line("cannot open log"); return; }
+  FILE* f; std::string lp = PortLogPath(); if (fopen_s(&f, lp.c_str(), "rb") && fopen_s(&f, (LogDir() + "\\crawler.log").c_str(), "rb")) { o.line("cannot open log"); return; }
   _fseeki64(f, 0, SEEK_END); long long sz = _ftelli64(f); long long st = std::max(0LL, sz - 64 * 1024);
   _fseeki64(f, st, SEEK_SET); std::string d((size_t)(sz - st), 0); fread(&d[0], 1, d.size(), f); fclose(f);
   std::vector<std::string> lines; size_t s = 0, e;
@@ -306,7 +306,7 @@ static std::string BuildInfo() {
   HMODULE me = nullptr; char p[MAX_PATH] = {};
   GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&BuildInfo, &me);
   std::string cm = me && GetModuleFileNameA(me, p, MAX_PATH) ? FileMd5(p) : "";
-  std::string lm; HMODULE ld = GetModuleHandleA("UEScanner.dll"); if (ld && GetModuleFileNameA(ld, p, MAX_PATH)) lm = FileMd5(p);
+  std::string lm; HMODULE ld = GetModuleHandleA("GameCrawler.dll"); if (ld && GetModuleFileNameA(ld, p, MAX_PATH)) lm = FileMd5(p);
   s = Fmt(" md5=%s loader_md5=%s port=%d", cm.empty() ? "?" : cm.c_str(), lm.empty() ? "?" : lm.c_str(), PortNum());
   return s;
 }
@@ -317,7 +317,7 @@ static void HandleText(const char* line, EmitFn emit, void* ctx) {
   std::string c = Lower(t[0]); std::string err; uint64_t a;
   auto rest = [&](size_t i) { size_t p = 0; for (size_t k = 0; k < i; k++) { while (p < L.size() && L[p] == ' ') p++; if (p < L.size() && L[p] == '"') { p = L.find('"', p + 1); p = p == std::string::npos ? L.size() : p + 1; } else while (p < L.size() && L[p] != ' ') p++; } while (p < L.size() && L[p] == ' ') p++; return L.substr(std::min(p, L.size())); };
   if (c == "help") o.line(HELP);
-  else if (c == "ver") o.f("UEScannerCore built %s %s ticks=%llu%s", __DATE__, __TIME__, H->tickCount, BuildInfo().c_str());
+  else if (c == "ver") o.f("GameCrawlerCore built %s %s ticks=%llu%s", __DATE__, __TIME__, H->tickCount, BuildInfo().c_str());
   else if (c == "ping") o.f("pong pid=%lu base=0x%llx ticks=%llu core=loaded", GetCurrentProcessId(), (unsigned long long)H->base, H->tickCount);
   else if (c == "mark") {
     std::string txt = rest(1); if (txt.empty()) txt = "mark";

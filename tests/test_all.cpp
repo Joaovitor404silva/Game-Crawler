@@ -456,10 +456,10 @@ static void Scenario(const char* path) {
 
 int main(int argc, char** argv) {
   char dir[MAX_PATH]; GetTempPathA(MAX_PATH, dir);
-  std::string ld = std::string(dir) + "uescan_test_" + std::to_string(GetCurrentProcessId());
+  std::string ld = std::string(dir) + "crawler_test_" + std::to_string(GetCurrentProcessId());
   CreateDirectoryA(ld.c_str(), nullptr);
-  SetEnvironmentVariableA("UESCAN_LOGDIR", ld.c_str());
-  SetEnvironmentVariableA("UESCAN_PORT", "27999");
+  SetEnvironmentVariableA("CRAWLER_LOGDIR", ld.c_str());
+  SetEnvironmentVariableA("CRAWLER_PORT", "27999");
   g_testApi.base = (uintptr_t)GetModuleHandleA(nullptr); g_testApi.gameThreadId = GetCurrentThreadId();
   H = &g_testApi;
   TestJsonOut(); TestAgg(); TestChunk(); TestSampler(); TestWalk(); TestDetour(); TestStats(); TestUopt(); TestMemdiff(); TestRetry(); TestPose(); TestContainers(); TestPlugRestore(); TestHwHook(); TestUeScan();

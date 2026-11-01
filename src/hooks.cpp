@@ -20,7 +20,7 @@ static std::vector<Native> g_nat;
 static std::map<uint64_t, size_t> g_natByRva;
 void LoadNatives() {
   g_nat.clear(); g_natByRva.clear();
-  std::ifstream f(UEnv("UESCAN_NATIVES", UEPath("names\\natives_impl.tsv"))); std::string line;
+  std::ifstream f(UEnv("CRAWLER_NATIVES", UEPath("names\\natives_impl.tsv"))); std::string line;
   while (std::getline(f, line)) {
     std::istringstream ss(line); std::string n, e, i; std::getline(ss, n, '\t'); std::getline(ss, e, '\t'); std::getline(ss, i, '\t');
     uint64_t ev = _strtoui64(e.c_str(), nullptr, 16), iv = _strtoui64(i.c_str(), nullptr, 16);

@@ -11,9 +11,9 @@
 #include <tlhelp32.h>
 #pragma comment(lib, "ws2_32.lib")
 
-static const std::string& LogPathS() { static std::string p = UEnv("UESCAN_LOGDIR", UEHome()) + "\\uescan.log"; return p; }
+static const std::string& LogPathS() { static std::string p = UEnv("CRAWLER_LOGDIR", UEHome()) + "\\crawler.log"; return p; }
 #define LOG_PATH (LogPathS().c_str())
-static std::string CoreSrc() { char e[MAX_PATH]; DWORD n = GetEnvironmentVariableA("UESCAN_CORE", e, sizeof e); return n && n < sizeof e ? std::string(e) : UEPath("bin\\UEScannerCore.dll"); }
+static std::string CoreSrc() { char e[MAX_PATH]; DWORD n = GetEnvironmentVariableA("CRAWLER_CORE", e, sizeof e); return n && n < sizeof e ? std::string(e) : UEPath("bin\\GameCrawlerCore.dll"); }
 static const std::string& ShadowDirS() { static std::string p = UEPath("bin\\shadow"); return p; }
 #define SHADOW_DIR (ShadowDirS().c_str())
 static int PORT = 27060;
@@ -37,7 +37,7 @@ static void Log(const char* fmt, ...) {
   char buf[4096];
   SYSTEMTIME t; GetLocalTime(&t);
   int n = sprintf_s(buf, "[%02d:%02d:%02d.%03d] ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
-  static char tag[16] = "?"; if (tag[0] == '?') { tag[0] = 0; char ps[16]; if (GetEnvironmentVariableA("UESCAN_PORT", ps, sizeof ps)) sprintf_s(tag, "{%s} ", ps); }
+  static char tag[16] = "?"; if (tag[0] == '?') { tag[0] = 0; char ps[16]; if (GetEnvironmentVariableA("CRAWLER_PORT", ps, sizeof ps)) sprintf_s(tag, "{%s} ", ps); }
   n += sprintf_s(buf + n, sizeof(buf) - n, "%s", tag);
   va_list ap; va_start(ap, fmt); vsnprintf(buf + n, sizeof(buf) - n - 2, fmt, ap); va_end(ap);
   size_t len = strlen(buf); if (len == 0 || buf[len - 1] != '\n') { buf[len++] = '\n'; buf[len] = 0; }
@@ -46,7 +46,7 @@ static void Log(const char* fmt, ...) {
   LeaveCriticalSection(&g_logCs);
 }
 
-extern "C" __declspec(dllexport) int UEScannerInit() { return 1; }
+extern "C" __declspec(dllexport) int GameCrawlerInit() { return 1; }
 
 static int SafeInit(CoreInitFn f, HostApi* a) { __try { return f(a); } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; } }
 static bool SafeHandle(CoreHandleFn f, const char* l, EmitFn e, void* c) { __try { f(l, e, c); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
@@ -98,7 +98,7 @@ static std::string LoadCore() {
   AcquireSRWLockExclusive(&g_coreLock);
   UnloadCoreLocked();
   CreateDirectoryA(SHADOW_DIR, nullptr);
-  char shadow[MAX_PATH]; sprintf_s(shadow, "%s\\UEScannerCore_%lu_%d.dll", SHADOW_DIR, GetCurrentProcessId(), ++g_coreGen);
+  char shadow[MAX_PATH]; sprintf_s(shadow, "%s\\GameCrawlerCore_%lu_%d.dll", SHADOW_DIR, GetCurrentProcessId(), ++g_coreGen);
   std::string r;
   if (!CopyFileA(CoreSrc().c_str(), shadow, FALSE)) { r = "copy failed " + std::to_string(GetLastError()); }
   else if (!(g_core = LoadLibraryA(shadow))) { r = "LoadLibrary failed " + std::to_string(GetLastError()); }
@@ -147,12 +147,12 @@ static DWORD WINAPI ClientThread(LPVOID p) {
 }
 
 static DWORD WINAPI MainThread(LPVOID) {
-  Log("UE Scanner loader start pid=%lu base=0x%llx", GetCurrentProcessId(), (unsigned long long)g_api.base);
+  Log("Game Crawler loader start pid=%lu base=0x%llx", GetCurrentProcessId(), (unsigned long long)g_api.base);
   Log("MinHook init %d", MH_Initialize());
   g_mainTid = MainThreadId(); g_api.gameThreadId = g_mainTid;
   LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_pumpGap = f.QuadPart / 500;
   LoadCore();
-  char ps[16]; if (GetEnvironmentVariableA("UESCAN_PORT", ps, sizeof ps)) { int p = atoi(ps); if (p > 0 && p < 65536) PORT = p; }
+  char ps[16]; if (GetEnvironmentVariableA("CRAWLER_PORT", ps, sizeof ps)) { int p = atoi(ps); if (p > 0 && p < 65536) PORT = p; }
   WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
   SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   int one = 1; setsockopt(ls, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (char*)&one, sizeof(one));
@@ -170,9 +170,9 @@ BOOL APIENTRY DllMain(HMODULE m, DWORD reason, LPVOID) {
     DisableThreadLibraryCalls(m);
     InitializeCriticalSection(&g_logCs); InitializeCriticalSection(&g_cmdCs);
     g_api.version = 2; g_api.log = Log; g_api.base = (uintptr_t)GetModuleHandleA(nullptr); g_api.hookPump = HookPump;
-    char hv[8]; if (!GetEnvironmentVariableA("UESCAN_HOME", hv, sizeof hv)) {
+    char hv[8]; if (!GetEnvironmentVariableA("CRAWLER_HOME", hv, sizeof hv)) {
       char p[MAX_PATH]; DWORD n = GetModuleFileNameA(m, p, MAX_PATH);
-      if (n && n < MAX_PATH) { for (int k = 0; k < 2; k++) { char* sl = strrchr(p, '\\'); if (sl) *sl = 0; } SetEnvironmentVariableA("UESCAN_HOME", p); }
+      if (n && n < MAX_PATH) { for (int k = 0; k < 2; k++) { char* sl = strrchr(p, '\\'); if (sl) *sl = 0; } SetEnvironmentVariableA("CRAWLER_HOME", p); }
     }
     HANDLE h = CreateThread(nullptr, 0, MainThread, nullptr, 0, nullptr); if (h) CloseHandle(h);
   }

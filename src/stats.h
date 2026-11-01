@@ -15,7 +15,7 @@ inline std::map<std::string, Stat>& Tab() { static std::map<std::string, Stat> t
 
 inline long long SlowMs() {
   static long long v = -1;
-  if (v < 0) { const char* e = getenv("UESCAN_SLOW_MS"); v = e && *e ? atoll(e) : 250; }
+  if (v < 0) { const char* e = getenv("CRAWLER_SLOW_MS"); v = e && *e ? atoll(e) : 250; }
   return v;
 }
 

@@ -28,8 +28,8 @@ async function main() {
   const delayed = line => /wait/.test(line) ? 1200 : 0;
   const s1 = await fake(delayed), s2 = await fake(delayed), s3 = await fake(delayed);
   const p1 = s1.address().port, p2 = s2.address().port, p3 = s3.address().port;
-  const logdir = fs.mkdtempSync(path.join(os.tmpdir(), 'uescan_mcp_'));
-  const env = Object.assign({}, process.env, { UESCAN_PORT: String(p1), UESCAN_ALL_PORTS: [p1, p2, p3].join(','), UESCAN_LOGDIR: logdir, UESCAN_TIMEOUT: '600' });
+  const logdir = fs.mkdtempSync(path.join(os.tmpdir(), 'crawler_mcp_'));
+  const env = Object.assign({}, process.env, { CRAWLER_PORT: String(p1), CRAWLER_ALL_PORTS: [p1, p2, p3].join(','), CRAWLER_LOGDIR: logdir, CRAWLER_TIMEOUT: '600' });
   const srv = spawn(process.execPath, [path.join(root, 'mcp', 'server.js')], { env, stdio: ['pipe', 'pipe', 'inherit'] });
   let id = 0; const pending = {}; let buf = '';
   srv.stdout.on('data', d => {
@@ -40,7 +40,7 @@ async function main() {
   const call = async (name, args) => { const r = await rpc('tools/call', { name, arguments: args || {} }); return { text: r.result ? r.result.content[0].text : JSON.stringify(r.error), err: r.result && r.result.isError }; };
 
   const init = await rpc('initialize', { protocolVersion: '2024-11-05' });
-  ok(init.result.serverInfo.name === 'ue-scanner', 'initialize');
+  ok(init.result.serverInfo.name === 'game-crawler', 'initialize');
   const tl = (await rpc('tools/list', {})).result.tools;
   const names = tl.map(t => t.name);
   for (const n of ['watchw', 'agg', 'scene', 'snap', 'sample', 'mark', 'hits', 'log', 'hook', 'bp', 'status']) ok(names.includes(n), 'tool listed ' + n);
@@ -81,7 +81,7 @@ async function main() {
   await call('watchw', { action: 'stop', id: '3', game: String(p3) });
   ok(last(p3) === 'watchw stop 3', 'watchw stop');
   const w = await call('watchw', { target: '0x2000', size: 8, secs: 1, wait: true, game: String(p3) });
-  ok(!w.err && last(p3) === 'watchw 0x2000 8 secs=1 wait', 'watchw wait extends the timeout beyond UESCAN_TIMEOUT: ' + w.text);
+  ok(!w.err && last(p3) === 'watchw 0x2000 8 secs=1 wait', 'watchw wait extends the timeout beyond CRAWLER_TIMEOUT: ' + w.text);
   const sw = await call('sample', { cols: 'x=[pawn+0x1c8]:f32', hz: 50, secs: 1, wait: true, name: 'a', game: String(p3) });
   ok(!sw.err && last(p3) === 'sample x=[pawn+0x1c8]:f32 50 1 name=a wait', 'sample wait: ' + last(p3));
   const noWait = await call('con', { command: 'wait', game: String(p3) });
@@ -148,10 +148,10 @@ async function main() {
   const bAll = (await call('batch', { commands: ['ping', 'ver'], game: 'all' })).text;
   ok([p1, p2, p3].every(p => bAll.includes('== port ' + p + ' ==\n== ping\nR:' + p + ':ping')), 'batch fan-out with game=all');
 
-  fs.writeFileSync(path.join(logdir, 'uescan_' + p2 + '.log'), 'line a\nline b\n');
-  fs.writeFileSync(path.join(logdir, 'uescan.log'), 'shared one\n');
-  const off = fs.statSync(path.join(logdir, 'uescan_' + p2 + '.log')).size;
-  fs.appendFileSync(path.join(logdir, 'uescan_' + p2 + '.log'), 'line c\nline d hit #4\n');
+  fs.writeFileSync(path.join(logdir, 'crawler_' + p2 + '.log'), 'line a\nline b\n');
+  fs.writeFileSync(path.join(logdir, 'crawler.log'), 'shared one\n');
+  const off = fs.statSync(path.join(logdir, 'crawler_' + p2 + '.log')).size;
+  fs.appendFileSync(path.join(logdir, 'crawler_' + p2 + '.log'), 'line c\nline d hit #4\n');
   const l1 = await call('log', { n: 10, game: String(p2) });
   ok(l1.text === 'line a\nline b\nline c\nline d hit #4', 'per-port log: ' + l1.text);
   const l2 = await call('log', { n: 10, since: off, game: String(p2) });
@@ -161,7 +161,7 @@ async function main() {
   const l4 = await call('log', { n: 10, game: String(p1) });
   ok(l4.text === 'shared one', 'fallback to shared log when the port has none: ' + l4.text);
 
-  const cli = (args) => new Promise(res => execFile(process.execPath, [path.join(root, 'uescan.js'), ...args], { env: Object.assign({}, process.env, { UESCAN_PORT: '1' }), encoding: 'utf8' }, (e, so, se) => res({ stdout: so, status: e ? e.code : 0 })));
+  const cli = (args) => new Promise(res => execFile(process.execPath, [path.join(root, 'crawler.js'), ...args], { env: Object.assign({}, process.env, { CRAWLER_PORT: '1' }), encoding: 'utf8' }, (e, so, se) => res({ stdout: so, status: e ? e.code : 0 })));
   let r = await cli(['--game', String(p2), 'ping']);
   ok(r.stdout.trim() === 'R:' + p2 + ':ping', 'cli --game: ' + r.stdout);
   r = await cli(['--json', '--port', String(p2), 'rd', '0x10', '8']);

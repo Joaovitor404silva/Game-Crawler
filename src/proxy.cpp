@@ -19,10 +19,10 @@
 #pragma comment(linker, "/export:VerQueryValueW=C:\\Windows\\System32\\version.VerQueryValueW")
 
 static std::string HomeFor(HMODULE m) {
-  char e[MAX_PATH]; DWORD n = GetEnvironmentVariableA("UESCAN_HOME", e, MAX_PATH); if (n && n < MAX_PATH) return e;
+  char e[MAX_PATH]; DWORD n = GetEnvironmentVariableA("CRAWLER_HOME", e, MAX_PATH); if (n && n < MAX_PATH) return e;
   char p[MAX_PATH]; n = GetModuleFileNameA(m, p, MAX_PATH); if (!n || n >= MAX_PATH) return "";
   char* s = strrchr(p, '\\'); if (s) *s = 0;
-  std::string dir = p, cfg = dir + "\\uescan_home.txt";
+  std::string dir = p, cfg = dir + "\\crawler_home.txt";
   HANDLE f = CreateFileA(cfg.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
   if (f == INVALID_HANDLE_VALUE) return dir;
   char b[MAX_PATH] = {}; DWORD r = 0; ReadFile(f, b, MAX_PATH - 1, &r, nullptr); CloseHandle(f);
@@ -33,8 +33,8 @@ static std::string HomeFor(HMODULE m) {
 
 static DWORD WINAPI Boot(LPVOID m) {
   std::string home = HomeFor((HMODULE)m); if (home.empty()) return 0;
-  SetEnvironmentVariableA("UESCAN_HOME", home.c_str());
-  LoadLibraryA((home + "\\bin\\UEScanner.dll").c_str());
+  SetEnvironmentVariableA("CRAWLER_HOME", home.c_str());
+  LoadLibraryA((home + "\\bin\\GameCrawler.dll").c_str());
   return 0;
 }
 

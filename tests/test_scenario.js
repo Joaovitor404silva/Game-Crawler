@@ -101,7 +101,7 @@ ok(st.ok && stRow('rd').count >= 2 && stRow('hook').count >= 4 && stRow('memdiff
 ok(recs.find(r => r.step === 'stats' && r.cmd === 'stats clear').json.lines[0] === 'stats cleared', 'stats clear');
 
 const log = recs.find(r => r.step === 'logpath');
-ok(fs.existsSync(log.path) && fs.statSync(log.path).size > 0 && /uescan_27999\.log$/.test(log.path), 'per-port log exists');
+ok(fs.existsSync(log.path) && fs.statSync(log.path).size > 0 && /crawler_27999\.log$/.test(log.path), 'per-port log exists');
 
 console.log(`scenario: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

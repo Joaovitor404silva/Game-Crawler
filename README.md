@@ -1,4 +1,4 @@
-# UE Scanner
+# Game Crawler
 
 A live, in-process debugger for **Unreal Engine games** (UE 4.25+ and UE 5.x, Windows x64), built for modders and for AI
 coding agents. It loads into a dev *copy* of the game through a `version.dll` proxy and exposes Unreal reflection, memory,
@@ -25,13 +25,13 @@ the FField / UFunction layout from known engine classes, and finds the `ProcessE
 
 | Piece | Role |
 |---|---|
-| `src/make_devroot.ps1` | Builds the dev folder (default `C:\UEScanRoot\<game>`): junctions and hardlinks to the install, the `version.dll` proxy in `Binaries\Win64`, no other proxy DLLs (UE4SS, dxgi, dinput8, ...), no `Mods`/`~mods`/`LogicMods`, no `Saved`, plus `steam_appid.txt` for Steam games so they start outside Steam's launcher. Idempotent. |
-| `version.dll` (`src/proxy.cpp`) | Forwards every export to `System32\version.dll` and loads `bin\UEScanner.dll` from the folder in `UESCAN_HOME` or `uescan_home.txt`. |
-| `UEScanner.dll` (`src/loader.cpp`) | Loader: log, TCP server on `127.0.0.1:27060`, game-thread pump (hook on `ProcessEvent`, main thread only), hot reload of the core. |
-| `UEScannerCore.dll` (`src/core.cpp`, `ue.cpp`, `ue_scan.h`, `hooks.cpp`, `probe.cpp`, `plugins.cpp`) | Engine discovery and every command. Loaded from a shadow copy, so it can be rebuilt and reloaded while the game runs. |
-| `uescan.js` | CLI client. |
+| `src/make_devroot.ps1` | Builds the dev folder (default `C:\GameCrawlerRoot\<game>`): junctions and hardlinks to the install, the `version.dll` proxy in `Binaries\Win64`, no other proxy DLLs (UE4SS, dxgi, dinput8, ...), no `Mods`/`~mods`/`LogicMods`, no `Saved`, plus `steam_appid.txt` for Steam games so they start outside Steam's launcher. Idempotent. |
+| `version.dll` (`src/proxy.cpp`) | Forwards every export to `System32\version.dll` and loads `bin\GameCrawler.dll` from the folder in `CRAWLER_HOME` or `crawler_home.txt`. |
+| `GameCrawler.dll` (`src/loader.cpp`) | Loader: log, TCP server on `127.0.0.1:27060`, game-thread pump (hook on `ProcessEvent`, main thread only), hot reload of the core. |
+| `GameCrawlerCore.dll` (`src/core.cpp`, `ue.cpp`, `ue_scan.h`, `hooks.cpp`, `probe.cpp`, `plugins.cpp`) | Engine discovery and every command. Loaded from a shadow copy, so it can be rebuilt and reloaded while the game runs. |
+| `crawler.js` | CLI client. |
 | `mcp/server.js` | MCP server (stdio, JSON-RPC 2.0, no dependencies). |
-| `plugins/` | Plugin API (`uescan_api.h`) and `example`. |
+| `plugins/` | Plugin API (`crawler_api.h`) and `example`. |
 
 ## Requirements
 
@@ -44,12 +44,12 @@ the FField / UFunction layout from known engine classes, and finds the `ProcessE
 
 ```powershell
 git clone --recursive <this repo>        # MinHook is a submodule (src/minhook)
-cd UE-Scanner
-cmd /c src\build.bat                                         # -> bin\UEScanner.dll, bin\UEScannerCore.dll, bin\proxy\version.dll
+cd Game-Crawler
+cmd /c src\build.bat                                         # -> bin\GameCrawler.dll, bin\GameCrawlerCore.dll, bin\proxy\version.dll
 powershell -File src\make_devroot.ps1 -Exe "<game>\<Project>\Binaries\Win64\<Project>-Win64-Shipping.exe"
-powershell -File launch.ps1 -DevRoot C:\UEScanRoot\<game>     # windowed 1280x720, saves in Saved_dev
-node uescan.js ping                                           # -> pong pid=... core=loaded
-node uescan.js uinfo                                          # reflection layout, once the engine is up
+powershell -File launch.ps1 -DevRoot C:\GameCrawlerRoot\<game>     # windowed 1280x720, saves in Saved_dev
+node crawler.js ping                                           # -> pong pid=... core=loaded
+node crawler.js uinfo                                          # reflection layout, once the engine is up
 ```
 
 Use the `*-Win64-Shipping.exe` in `Binaries\Win64`, not the small launcher exe in the game root. `launch.ps1` refuses to start
@@ -59,12 +59,12 @@ Steam running.
 ### Register the MCP server
 
 ```powershell
-claude mcp add ue-scanner -- node <path>\UE-Scanner\mcp\server.js
+claude mcp add game-crawler -- node <path>\Game-Crawler\mcp\server.js
 ```
 
 ## CLI
 
-`node uescan.js [--json] [--port N] <command>`, `-i` interactive, `-f file` script.
+`node crawler.js [--json] [--port N] <command>`, `-i` interactive, `-f file` script.
 
 ```text
 ping
@@ -101,7 +101,7 @@ bpc, bps, hits, watchw, agg, scene, snap, sample, comps, pose, tarray, tset, tma
 unwatch, plugin, con, log, reload_core, raw`
 
 Every tool takes an optional `game` (port or alias) to target one of several dev games, and `all` runs it on every port.
-Results are capped at 12000 characters (`UESCAN_MCP_CAP`).
+Results are capped at 12000 characters (`CRAWLER_MCP_CAP`).
 
 ## Plugins
 
@@ -110,7 +110,7 @@ save it rebuilds (5-15 s) and swaps the plugin on the game thread: the old `UEPl
 fresh copy is loaded and `UEPluginInit` runs. A failed build keeps the old copy running.
 
 ```cpp
-#include "uescan_api.h"
+#include "crawler_api.h"
 static const UEApi* api;
 UE_EXPORT int UEPluginInit(const UEApi* a) { api = a; return 1; }
 UE_EXPORT void UEPluginTick() {
@@ -121,18 +121,18 @@ UE_EXPORT void UEPluginTick() {
 UE_EXPORT void UEPluginShutdown() {}
 ```
 
-API (`plugins/uescan_api.h`):
+API (`plugins/crawler_api.h`):
 
 | Member | Meaning |
 |---|---|
 | `base` | Game exe base address |
-| `log(fmt, ...)` | Append to `uescan.log`, prefixed with the plugin name |
-| `addr(expr)` | Address of a names-database name, a native, or any UE Scanner expression; 0 = not found |
+| `log(fmt, ...)` | Append to `crawler.log`, prefixed with the plugin name |
+| `addr(expr)` | Address of a names-database name, a native, or any Game Crawler expression; 0 = not found |
 | `sym(a, buf, n)` | Address -> `exe+0x.. Name+0x..` |
 | `hook` / `unhook` | Inline hook (returns 1 on success); hooks are removed automatically on unload |
 | `find(obj)` | UObject by `pawn`, `pc`, name, path or `0x` address |
 | `get` / `set` / `call` | Property as text / write a property / call a UFunction (queued to the game thread, up to 5 s) |
-| `cmd(line, out, n)` | Run any UE Scanner command |
+| `cmd(line, out, n)` | Run any Game Crawler command |
 | `ticks()` | Game-thread pump counter |
 
 Exports: `UEPluginInit` (required, return 1 = ok), `UEPluginTick` (optional, game thread), `UEPluginShutdown` (optional). A
@@ -160,14 +160,14 @@ and the PE imports and exports of the exe (read from the running game, or `--exe
 
 | Variable | Default | Used for |
 |---|---|---|
-| `UESCAN_HOME` | this folder (set by `launch.ps1`, or `uescan_home.txt` next to the proxy) | Root for `bin\`, `plugins\`, logs, `names\`, `sdk\` |
-| `UESCAN_PORT` | `27060` | TCP port of the dev game (one per game when several run) |
-| `UESCAN_LOGDIR` | `UESCAN_HOME` | Log folder (`uescan.log`, `uescan_<port>.log`) |
-| `UESCAN_CORE` | `bin\UEScannerCore.dll` | Core DLL to load (staged builds) |
-| `UESCAN_NAMES` | `names\names.tsv` | Names database |
-| `UESCAN_NATIVES` | `names\natives_impl.tsv` | Native exec -> impl table |
-| `UESCAN_DECOMP` | `decomp` | Decompile dump folder (MCP `decomp`) |
-| `UESCAN_TIMEOUT`, `UESCAN_MCP_CAP`, `UESCAN_ALL_PORTS` | | CLI/MCP timeout, MCP result cap, port list for `game=all` |
+| `CRAWLER_HOME` | this folder (set by `launch.ps1`, or `crawler_home.txt` next to the proxy) | Root for `bin\`, `plugins\`, logs, `names\`, `sdk\` |
+| `CRAWLER_PORT` | `27060` | TCP port of the dev game (one per game when several run) |
+| `CRAWLER_LOGDIR` | `CRAWLER_HOME` | Log folder (`crawler.log`, `crawler_<port>.log`) |
+| `CRAWLER_CORE` | `bin\GameCrawlerCore.dll` | Core DLL to load (staged builds) |
+| `CRAWLER_NAMES` | `names\names.tsv` | Names database |
+| `CRAWLER_NATIVES` | `names\natives_impl.tsv` | Native exec -> impl table |
+| `CRAWLER_DECOMP` | `decomp` | Decompile dump folder (MCP `decomp`) |
+| `CRAWLER_TIMEOUT`, `CRAWLER_MCP_CAP`, `CRAWLER_ALL_PORTS` | | CLI/MCP timeout, MCP result cap, port list for `game=all` |
 
 ## Tests
 
