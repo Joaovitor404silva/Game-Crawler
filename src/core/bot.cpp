@@ -1,4 +1,4 @@
-#define DIRECTINPUT_VERSION 0x0800
+﻿#define DIRECTINPUT_VERSION 0x0800
 #include <initguid.h>
 #include <dinput.h>
 #include "core.h"
@@ -10,12 +10,13 @@
 #include <atomic>
 #include <thread>
 #include <functional>
+#include <algorithm>
 #include <condition_variable>
 
 namespace {
 
 struct Ctr { std::atomic<long> calls{ 0 }, served{ 0 }; };
-struct HookRec { const char* name; void* target; bool ok; };
+struct HookRec { std::string name; void* target; bool ok; };
 
 std::mutex g_m;
 uint8_t g_keys[256];
@@ -32,6 +33,8 @@ const uintptr_t kFakeRaw = 0x7B0000000000ULL;
 std::atomic<unsigned> g_via{ bot::ALL };
 HWND g_hwnd = nullptr;
 std::map<void*, int> g_devType;
+std::map<void*, long> g_devCalls;
+HRESULT g_lastDiHr = 0; DWORD g_lastCbObj = 0, g_lastCap = 0, g_lastFlags = 0;
 std::vector<HookRec> g_hooks;
 bool g_userHooked = false, g_diHooked = false;
 Ctr c_async, c_keyState, c_kbState, c_cursorPos, c_raw, c_diState, c_diData;
@@ -57,8 +60,8 @@ CurFn o_cursorPos;
 RawFn o_raw;
 typedef HWND(WINAPI* WndFn)();
 WndFn o_fg, o_active, o_getFocus;
-GdsFn o_gdsW, o_gdsA;
-GddFn o_gddW, o_gddA;
+GdsFn o_gdsW, o_gdsA, o_gdsW2, o_gdsA2;
+GddFn o_gddW, o_gddA, o_gddW2, o_gddA2;
 
 BOOL CALLBACK FindWnd(HWND h, LPARAM lp) {
   DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
@@ -145,8 +148,16 @@ void PatchState(DWORD cb, LPVOID data) {
     if (any) c_diState.served++;
   }
 }
-HRESULT WINAPI HkGdsW(void* dev, DWORD cb, LPVOID data) { HRESULT hr = o_gdsW(dev, cb, data); c_diState.calls++; if (SUCCEEDED(hr)) PatchState(cb, data); return hr; }
-HRESULT WINAPI HkGdsA(void* dev, DWORD cb, LPVOID data) { HRESULT hr = o_gdsA(dev, cb, data); c_diState.calls++; if (SUCCEEDED(hr)) PatchState(cb, data); return hr; }
+bool Unfocused(HRESULT hr) { return g_focus && (g_via & bot::DI) && (hr == DIERR_NOTACQUIRED || hr == DIERR_INPUTLOST || hr == DIERR_OTHERAPPHASPRIO); }
+HRESULT Gds(GdsFn o, void* dev, DWORD cb, LPVOID data) {
+  HRESULT hr = o(dev, cb, data); c_diState.calls++;
+  if (FAILED(hr) && data && Unfocused(hr)) { memset(data, 0, cb); hr = DI_OK; }
+  if (SUCCEEDED(hr)) PatchState(cb, data); return hr;
+}
+HRESULT WINAPI HkGdsW(void* dev, DWORD cb, LPVOID data) { return Gds(o_gdsW, dev, cb, data); }
+HRESULT WINAPI HkGdsA(void* dev, DWORD cb, LPVOID data) { return Gds(o_gdsA, dev, cb, data); }
+HRESULT WINAPI HkGdsW2(void* dev, DWORD cb, LPVOID data) { return Gds(o_gdsW2, dev, cb, data); }
+HRESULT WINAPI HkGdsA2(void* dev, DWORD cb, LPVOID data) { return Gds(o_gdsA2, dev, cb, data); }
 
 void AppendData(void* dev, DWORD cbObj, LPDIDEVICEOBJECTDATA rg, LPDWORD inout, DWORD cap) {
   int t = DevType(dev); std::lock_guard<std::mutex> l(g_m);
@@ -158,11 +169,15 @@ void AppendData(void* dev, DWORD cbObj, LPDIDEVICEOBJECTDATA rg, LPDWORD inout, 
 }
 HRESULT Gdd(GddFn o, void* dev, DWORD cbObj, LPDIDEVICEOBJECTDATA rg, LPDWORD inout, DWORD flags) {
   DWORD cap = inout ? *inout : 0; HRESULT hr = o(dev, cbObj, rg, inout, flags); c_diData.calls++;
+  { std::lock_guard<std::mutex> l(g_m); g_devCalls[dev]++; g_lastDiHr = hr; g_lastCbObj = cbObj; g_lastCap = cap; g_lastFlags = flags; }
+  if (FAILED(hr) && inout && Unfocused(hr)) { *inout = 0; hr = DI_OK; }
   if (SUCCEEDED(hr) && rg && inout && !(flags & DIGDD_PEEK) && (g_via & bot::DI) && cbObj >= 16) AppendData(dev, cbObj, rg, inout, cap);
   return hr;
 }
 HRESULT WINAPI HkGddW(void* dev, DWORD cbObj, LPDIDEVICEOBJECTDATA rg, LPDWORD inout, DWORD flags) { return Gdd(o_gddW, dev, cbObj, rg, inout, flags); }
 HRESULT WINAPI HkGddA(void* dev, DWORD cbObj, LPDIDEVICEOBJECTDATA rg, LPDWORD inout, DWORD flags) { return Gdd(o_gddA, dev, cbObj, rg, inout, flags); }
+HRESULT WINAPI HkGddW2(void* dev, DWORD cbObj, LPDIDEVICEOBJECTDATA rg, LPDWORD inout, DWORD flags) { return Gdd(o_gddW2, dev, cbObj, rg, inout, flags); }
+HRESULT WINAPI HkGddA2(void* dev, DWORD cbObj, LPDIDEVICEOBJECTDATA rg, LPDWORD inout, DWORD flags) { return Gdd(o_gddA2, dev, cbObj, rg, inout, flags); }
 
 bool Hook(const char* name, void* target, void* detour, void** orig) {
   if (!target) { g_hooks.push_back({ name, nullptr, false }); return false; }
@@ -192,23 +207,26 @@ void InstallDi() {
   typedef HRESULT(WINAPI* CreateFn)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
   auto create = (CreateFn)GetProcAddress(d, "DirectInput8Create"); if (!create) return;
   g_diHooked = true;
-  void* vtW[2] = {}; void* vtA[2] = {};
+  void* vt[2][2][2] = {};
+  const GUID* guids[2] = { &GUID_SysKeyboard, &GUID_SysMouse };
   IDirectInput8W* w = nullptr;
   if (SUCCEEDED(create(GetModuleHandleA(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8W, (LPVOID*)&w, nullptr)) && w) {
-    IDirectInputDevice8W* dev = nullptr;
-    if (SUCCEEDED(w->CreateDevice(GUID_SysKeyboard, &dev, nullptr)) && dev) { void** vt = *(void***)dev; vtW[0] = vt[9]; vtW[1] = vt[10]; dev->Release(); }
+    for (int g = 0; g < 2; g++) { IDirectInputDevice8W* dev = nullptr; if (SUCCEEDED(w->CreateDevice(*guids[g], &dev, nullptr)) && dev) { void** v = *(void***)dev; vt[0][g][0] = v[9]; vt[0][g][1] = v[10]; dev->Release(); } }
     w->Release();
   }
-  IDirectInput8A* a = nullptr;
-  if (SUCCEEDED(create(GetModuleHandleA(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8A, (LPVOID*)&a, nullptr)) && a) {
-    IDirectInputDevice8A* dev = nullptr;
-    if (SUCCEEDED(a->CreateDevice(GUID_SysKeyboard, &dev, nullptr)) && dev) { void** vt = *(void***)dev; vtA[0] = vt[9]; vtA[1] = vt[10]; dev->Release(); }
-    a->Release();
+  IDirectInput8A* an = nullptr;
+  if (SUCCEEDED(create(GetModuleHandleA(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8A, (LPVOID*)&an, nullptr)) && an) {
+    for (int g = 0; g < 2; g++) { IDirectInputDevice8A* dev = nullptr; if (SUCCEEDED(an->CreateDevice(*guids[g], &dev, nullptr)) && dev) { void** v = *(void***)dev; vt[1][g][0] = v[9]; vt[1][g][1] = v[10]; dev->Release(); } }
+    an->Release();
   }
-  Hook("DI8.GetDeviceState(W)", vtW[0], (void*)HkGdsW, (void**)&o_gdsW);
-  Hook("DI8.GetDeviceData(W)", vtW[1], (void*)HkGddW, (void**)&o_gddW);
-  if (vtA[0] && vtA[0] != vtW[0]) Hook("DI8.GetDeviceState(A)", vtA[0], (void*)HkGdsA, (void**)&o_gdsA);
-  if (vtA[1] && vtA[1] != vtW[1]) Hook("DI8.GetDeviceData(A)", vtA[1], (void*)HkGddA, (void**)&o_gddA);
+  GdsFn* gdsSlots[4] = { &o_gdsW, &o_gdsA, &o_gdsW2, &o_gdsA2 }; GddFn* gddSlots[4] = { &o_gddW, &o_gddA, &o_gddW2, &o_gddA2 };
+  void* gdsHk[4] = { (void*)HkGdsW, (void*)HkGdsA, (void*)HkGdsW2, (void*)HkGdsA2 }; void* gddHk[4] = { (void*)HkGddW, (void*)HkGddA, (void*)HkGddW2, (void*)HkGddA2 };
+  std::vector<void*> seenS, seenD; int ns = 0, nd = 0;
+  for (int i = 0; i < 2; i++) for (int g = 0; g < 2; g++) {
+    void* ps = vt[i][g][0]; void* pd = vt[i][g][1];
+    if (ps && ns < 4 && std::find(seenS.begin(), seenS.end(), ps) == seenS.end()) { seenS.push_back(ps); Hook(Fmt("DI8.GetDeviceState(%s%s)", i ? "A" : "W", g ? ",mouse" : "").c_str(), ps, gdsHk[ns], (void**)gdsSlots[ns]); ns++; }
+    if (pd && nd < 4 && std::find(seenD.begin(), seenD.end(), pd) == seenD.end()) { seenD.push_back(pd); Hook(Fmt("DI8.GetDeviceData(%s%s)", i ? "A" : "W", g ? ",mouse" : "").c_str(), pd, gddHk[nd], (void**)gddSlots[nd]); nd++; }
+  }
 }
 
 void Install() { InstallUser(); InstallDi(); }
@@ -355,7 +373,7 @@ void Run(Out& out, const Opts& o, const std::string& what, std::function<void(lo
 }
 
 std::string HookSummary() {
-  std::string s; for (auto& h : g_hooks) s += Fmt("%s%s%s", s.empty() ? "" : ", ", h.name, h.ok ? "" : "(failed)"); return s.empty() ? "none" : s;
+  std::string s; for (auto& h : g_hooks) s += Fmt("%s%s%s", s.empty() ? "" : ", ", h.name.c_str(), h.ok ? "" : "(failed)"); return s.empty() ? "none" : s;
 }
 
 void Status(Out& o) {
@@ -367,6 +385,8 @@ void Status(Out& o) {
   std::string held; for (int i = 1; i < 256; i++) if (g_keys[i]) held += Fmt(" 0x%02x", i); for (int i = 0; i < 5; i++) if (g_btn[i]) held += Fmt(" btn%d", i);
   o.f("held:%s", held.empty() ? " none" : held.c_str());
   o.f("hooks: %s", HookSummary().c_str());
+  { std::string d; std::lock_guard<std::mutex> l(g_m); for (auto& e : g_devCalls) { auto it = g_devType.find(e.first); d += Fmt(" %p type=0x%x calls=%ld", e.first, it == g_devType.end() ? -1 : it->second, e.second); }
+    o.f("di devices:%s  last hr=0x%lx cbObj=%lu cap=%lu flags=%lu  queued kb=%zu mouse=%zu", d.empty() ? " none" : d.c_str(), (unsigned long)g_lastDiHr, g_lastCbObj, g_lastCap, g_lastFlags, g_diKb.size(), g_diMouse.size()); }
   o.f("game reads (calls/injected): GetAsyncKeyState %ld/%ld  GetKeyState %ld/%ld  GetKeyboardState %ld/%ld  GetCursorPos %ld/%ld  GetRawInputData %ld/%ld  DI state %ld/%ld  DI data %ld/%ld  posted msgs %ld",
     (long)c_async.calls, (long)c_async.served, (long)c_keyState.calls, (long)c_keyState.served, (long)c_kbState.calls, (long)c_kbState.served,
     (long)c_cursorPos.calls, (long)c_cursorPos.served, (long)c_raw.calls, (long)c_raw.served, (long)c_diState.calls, (long)c_diState.served,

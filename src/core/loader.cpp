@@ -163,13 +163,23 @@ static DWORD WINAPI MainThread(LPVOID) {
   g_mainTid = MainThreadId(); g_api.gameThreadId = g_mainTid;
   LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_pumpGap = f.QuadPart / 500;
   HookMessagePump();
-  LoadCore();
-  char ps[16]; if (GetEnvironmentVariableA("CRAWLER_PORT", ps, sizeof ps)) { int p = atoi(ps); if (p > 0 && p < 65536) PORT = p; }
+  char ps[16]; bool pinned = false; if (GetEnvironmentVariableA("CRAWLER_PORT", ps, sizeof ps)) { int p = atoi(ps); if (p > 0 && p < 65536) { PORT = p; pinned = true; } }
   WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
-  SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  int one = 1; setsockopt(ls, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (char*)&one, sizeof(one));
-  sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons(PORT); inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
-  if (bind(ls, (sockaddr*)&a, sizeof(a)) || listen(ls, 8)) { Log("listen failed %d", WSAGetLastError()); return 0; }
+  SOCKET ls = INVALID_SOCKET; bool warned = false;
+  for (;;) {
+    int first = PORT, last = pinned ? PORT : 27064;
+    for (int p = first; p <= last && ls == INVALID_SOCKET; p++) {
+      SOCKET t = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+      int one = 1; setsockopt(t, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (char*)&one, sizeof(one));
+      sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons((u_short)p); inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+      if (!bind(t, (sockaddr*)&a, sizeof(a)) && !listen(t, 8)) { ls = t; PORT = p; } else closesocket(t);
+    }
+    if (ls != INVALID_SOCKET) break;
+    if (!warned) { Log("listen failed %d on ports %d-%d, retrying", WSAGetLastError(), first, last); warned = true; }
+    Sleep(2000);
+  }
+  if (!pinned) { sprintf_s(ps, "%d", PORT); SetEnvironmentVariableA("CRAWLER_PORT", ps); }
+  LoadCore();
   Log("listening on 127.0.0.1:%d", PORT);
   for (;;) {
     SOCKET s = accept(ls, nullptr, nullptr); if (s == INVALID_SOCKET) { Sleep(100); continue; }
