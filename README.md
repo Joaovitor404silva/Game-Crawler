@@ -16,8 +16,8 @@ No per-game signatures. On start it finds `GUObjectArray` and the `FNamePool` by
 the FField / UFunction layout from known engine classes, and finds the `ProcessEvent` vtable slot from `Default__Object`.
 
 > **Single-player dev tool.** It never modifies your game install: it builds a separate dev folder made of links to the game
-> files and puts the proxy there. Tested on S.T.A.L.K.E.R. 2 (UE 5.5), Backseat Drivers (UE 5) and Deep Rock Galactic
-> (UE 4.27). Other engine versions and custom engine forks may need fixes. Unofficial, offline use only, at your own risk; read the [Disclaimer](#disclaimer).
+> files and puts the proxy there. Tested on S.T.A.L.K.E.R. 2 (UE 5.5), Backseat Drivers (UE 5), Deep Rock Galactic
+> (UE 4.27) and Hogwarts Legacy (UE 4.27, DRM-wrapped exe); generic tools and the input bot also on S.T.A.L.K.E.R. Anomaly (X-Ray). Other engine versions and custom engine forks may need fixes. Unofficial, offline use only, at your own risk; read the [Disclaimer](#disclaimer).
 
 ---
 
@@ -35,7 +35,7 @@ the FField / UFunction layout from known engine classes, and finds the `ProcessE
 
 ## Requirements
 
-- Windows 10/11 x64, an Unreal Engine game (64-bit, not packed or protected by anti-cheat)
+- Windows 10/11 x64, a 64-bit game without anti-cheat (Unreal Engine for the engine tools; generic tools and the input bot work on any game)
 - Visual Studio 2022 (any edition) with the **MSVC x64 C++ tools**; the build finds it through `vswhere`
 - Node.js 18+
 - PowerShell 5.1+ (hardlinks need the dev folder on the same drive as the game, otherwise files are copied)
@@ -183,7 +183,7 @@ No game needed.
 
 ## Limits
 
-- 64-bit Windows builds only. Games with anti-cheat (EAC, BattlEye, ...) or exe packers are not supported; do not try.
+- 64-bit Windows builds only. Games with anti-cheat (EAC, BattlEye, ...) are not supported; do not try. DRM-wrapped exes (e.g. Denuvo) work when the game runs normally; other packers are untested.
 - UE 4.25+ (FField properties). Older UE4 (UProperty) and heavily modified engine forks are not detected yet.
 - Console variables (`cvar`) need a per-game `IConsoleManager` address and are off; `con` uses `ExecuteConsoleCommand`.
 - Games that already ship a `version.dll` next to the exe need a different proxy name.
