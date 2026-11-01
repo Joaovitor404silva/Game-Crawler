@@ -932,9 +932,11 @@ void InitUObj() {
     FF_NAME = nameOff; FF_NEXT = nameOff - 8;
     uintptr_t pt = FindProp(actor, "PrimaryActorTick"), be = FindProp(pawn, "BaseEyeHeight");
     if (!pt || !be) continue;
-    for (int off = nameOff + 0x10; off < nameOff + 0x40; off += 4) if (Rd<int>(pt + off) == 0x28 && Rd<int>(be + off) == 0x2BC) { P_OFFSET = off; found = true; break; }
+    P_ARRAYDIM = -1;
+    for (int off = nameOff + 0x8; off < nameOff + 0x30; off += 4) if (Rd<int>(be + off) == 1 && Rd<int>(be + off + 4) == 4 && Rd<int>(pt + off) == 1 && Rd<int>(pt + off + 4) >= 0x20) { P_ARRAYDIM = off; P_ELEMSIZE = off + 4; break; }
+    if (P_ARRAYDIM < 0) continue;
+    for (int off = P_ELEMSIZE + 4; off < nameOff + 0x40; off += 4) { int pb = Rd<int>(be + off); if (Rd<int>(pt + off) == 0x28 && pb >= 0x200 && pb < 0x2000 && !(pb & 3)) { P_OFFSET = off; found = true; break; } }
     if (!found) continue;
-    for (int off = nameOff + 0x8; off < P_OFFSET; off += 4) if (Rd<int>(be + off) == 1 && Rd<int>(be + off + 4) == 4) { P_ARRAYDIM = off; P_ELEMSIZE = off + 4; break; }
     P_FLAGS = (P_ELEMSIZE + 4 + 7) & ~7;
     for (int off = P_OFFSET + 4; off < P_OFFSET + 0x60; off += 8) { uintptr_t s = RdP(pt + off); if (IsObj(s) && ObjName(s) == "ActorTickFunction") { P_SIZE = off; break; } }
     break;
