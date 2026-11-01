@@ -12,8 +12,6 @@
 #include <fstream>
 #include <sstream>
 
-std::string ObjName(uintptr_t o);
-bool IsObj(uintptr_t p);
 
 struct Native { std::string name; uint64_t exec, impl; };
 static std::vector<Native> g_nat;
@@ -122,7 +120,7 @@ static std::vector<Hook*> g_hooks; static int g_hookId;
 static std::vector<void*> g_stubPages;
 
 static std::string ArgDesc(uint64_t v) {
-  std::string d = IsObj(v) ? " (" + ObjName(v) + ")" : ""; return Fmt("0x%llx%s", v, d.c_str());
+  std::string n = ObjLabel(v), d = n.empty() ? "" : " (" + n + ")"; return Fmt("0x%llx%s", v, d.c_str());
 }
 extern "C" int HookOnHit(Hook* h, uint64_t* regs) {
   if (h->o.fl.any() && !h->o.fl.match(regs[3], regs[2], regs[1], regs[0])) { InterlockedIncrement64(&h->filtered); return 0; }

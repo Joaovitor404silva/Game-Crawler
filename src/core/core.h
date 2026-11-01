@@ -1,6 +1,7 @@
 #pragma once
 #include "core_util.h"
 #include <functional>
+#include "engine.h"
 
 bool RunOnGame(std::function<void()> fn, DWORD timeoutMs, std::string* err);
 bool EvalAddr(const std::string& s, uint64_t& v, std::string& err);
@@ -11,18 +12,8 @@ std::string ModOf(uintptr_t a);
 int SafeProcessEvent(void* fn, void* obj, void* func, void* params);
 
 
-void InitUObj();
-bool TryUObj(std::string& why);
-bool UObjReady();
-int ProcessEventSlot();
 uintptr_t TextBeg();
 uintptr_t TextEnd();
-void TickWatches();
-uintptr_t ResolveObj(const std::string& s);
-size_t ObjSize(uintptr_t a);
-std::string PropAtOffset(uintptr_t obj, int off);
-std::string DescribeObj(uintptr_t a);
-bool HandleUObj(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o);
 
 void LoadNatives();
 std::string NativeNameAt(uintptr_t a);
@@ -45,7 +36,6 @@ extern thread_local int t_objCacheMs;
 extern thread_local int t_jsonSuppress;
 void JsonSetData(const std::string& rawJson);
 void JsonSetOk(bool ok);
-bool UPropAddr(const std::string& obj, const std::string& path, uintptr_t& addr, int& size, std::string& type, std::string& val, std::string& err);
 
 
 void InitProbe();

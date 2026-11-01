@@ -26,9 +26,9 @@ the FField / UFunction layout from known engine classes, and finds the `ProcessE
 | Piece | Role |
 |---|---|
 | `src/make_devroot.ps1` | Builds the dev folder (default `C:\GameCrawlerRoot\<game>`): junctions and hardlinks to the install, the `version.dll` proxy in `Binaries\Win64`, no other proxy DLLs (UE4SS, dxgi, dinput8, ...), no `Mods`/`~mods`/`LogicMods`, no `Saved`, plus `steam_appid.txt` for Steam games so they start outside Steam's launcher. Idempotent. |
-| `version.dll` (`src/proxy.cpp`) | Forwards every export to `System32\version.dll` and loads `bin\GameCrawler.dll` from the folder in `CRAWLER_HOME` or `crawler_home.txt`. |
-| `GameCrawler.dll` (`src/loader.cpp`) | Loader: log, TCP server on `127.0.0.1:27060`, game-thread pump (hook on `ProcessEvent`, main thread only), hot reload of the core. |
-| `GameCrawlerCore.dll` (`src/core.cpp`, `ue.cpp`, `ue_scan.h`, `hooks.cpp`, `probe.cpp`, `plugins.cpp`) | Engine discovery and every command. Loaded from a shadow copy, so it can be rebuilt and reloaded while the game runs. |
+| `version.dll` (`src/core/proxy.cpp`) | Forwards every export to `System32\version.dll` and loads `bin\GameCrawler.dll` from the folder in `CRAWLER_HOME` or `crawler_home.txt`. |
+| `GameCrawler.dll` (`src/core/loader.cpp`) | Loader: log, TCP server on `127.0.0.1:27060`, game-thread pump (hook on `PeekMessage` for any game, plus `ProcessEvent` on Unreal; main thread only), hot reload of the core. |
+| `GameCrawlerCore.dll` (`src/core/*` + `src/engines/*`) | Every command. `src/core` is engine-neutral (memory, hooks, breakpoints, capture, plugins); `src/engines/<engine>/` holds one backend per engine (`ue` today) behind `src/engines/engine.h`; `engine` shows which one was detected. Loaded from a shadow copy, so it can be rebuilt and reloaded while the game runs. |
 | `crawler.js` | CLI client. |
 | `mcp/server.js` | MCP server (stdio, JSON-RPC 2.0, no dependencies). |
 | `plugins/` | Plugin API (`crawler_api.h`) and `example`. |

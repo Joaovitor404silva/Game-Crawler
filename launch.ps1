@@ -15,5 +15,7 @@ if ($dev) { "dev game already running pid=$($dev.ProcessId)"; exit 1 }
 if ($run -and -not $Force) { "$exeName already running outside the dev root; use -Force to launch alongside"; exit 2 }
 Copy-Item "$PSScriptRoot\bin\proxy\version.dll" (Join-Path (Split-Path $exe) 'version.dll') -Force
 $env:CRAWLER_HOME = $PSScriptRoot
-$p = Start-Process -FilePath $exe -ArgumentList $GameArgs -PassThru
+$sp = @{ FilePath = $exe; WorkingDirectory = (Split-Path $exe); PassThru = $true }
+if ($GameArgs) { $sp.ArgumentList = $GameArgs }
+$p = Start-Process @sp
 "launched pid=$($p.Id)"

@@ -4,10 +4,22 @@
 #include "json_out.h"
 #include "ue_scan.h"
 #include "minhook/src/hde/hde64.h"
-#include "ue_opts.h"
+#include "opts.h"
 #include "pose.h"
 #include "containers.h"
 #include "retry.h"
+
+bool UeTry(std::string& why);
+bool UeReady();
+void UeTickWatches();
+uintptr_t UeResolveObj(const std::string& s);
+size_t UeObjSize(uintptr_t a);
+std::string UePropAtOffset(uintptr_t obj, int off);
+std::string UeDescribeObj(uintptr_t a);
+bool UeHandle(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o);
+bool UeUPropAddr(const std::string& obj, const std::string& path, uintptr_t& addr, int& size, std::string& type, std::string& val, std::string& err);
+void InitUObj();
+int ProcessEventSlot();
 #include <unordered_map>
 #include <map>
 #include <mutex>
@@ -80,7 +92,7 @@ static std::string PathOf(uintptr_t o) {
   }
   return s;
 }
-std::string DescribeObj(uintptr_t a) { if (!IsObj(a)) return ""; return ClassName(a) + " " + PathOf(a); }
+std::string UeDescribeObj(uintptr_t a) { if (!IsObj(a)) return ""; return ClassName(a) + " " + PathOf(a); }
 static uintptr_t SuperOf(uintptr_t s) { return RdP(s + S_SUPER); }
 static bool IsA(uintptr_t o, const std::string& cls) {
   for (uintptr_t c = ClassOf(o); c; c = SuperOf(c)) if (ObjName(c) == cls) return true; return false;
@@ -204,7 +216,7 @@ static bool PropPath(uintptr_t obj, const std::string& path, uintptr_t& prop, ui
 
 static bool SetValue(uintptr_t p, uintptr_t a, const std::string& v, std::string& err, std::vector<std::wstring>* keep);
 static bool GameFString(const std::string& v, FStr& out, std::string& err) {
-  static uintptr_t ksl; if (!IsObj(ksl)) ksl = ResolveObj("Default__KismetStringLibrary");
+  static uintptr_t ksl; if (!IsObj(ksl)) ksl = UeResolveObj("Default__KismetStringLibrary");
   uintptr_t fn = ksl ? FindFunc(ClassOf(ksl), "Concat_StrStr") : 0; if (!fn) { err = "KismetStringLibrary::Concat_StrStr not found"; return false; }
   uint8_t buf[64] = {}; std::vector<std::wstring> keep; keep.reserve(4); uintptr_t ret = 0; int ai = 0;
   ForProps(fn, false, [&](uintptr_t q) { if (PropFlags(q) & 0x400) ret = q; else if (PropFlags(q) & 0x80) SetValue(q, (uintptr_t)buf + PropOff(q), ai++ == 0 ? v : "", err, &keep); return true; });
@@ -223,7 +235,7 @@ static bool SetValue(uintptr_t p, uintptr_t a, const std::string& v, std::string
   else if (ty == "IntProperty" || ty == "UInt32Property" || ty == "Int16Property" || ty == "UInt16Property" || ty == "Int8Property" || ty == "ByteProperty" || ty == "Int64Property" || ty == "UInt64Property" || ty == "EnumProperty") {
     int64_t x = _strtoi64(v.c_str(), nullptr, 0); W(&x, PropElem(p));
   }
-  else if (ty == "ObjectProperty" || ty == "ClassProperty") { uintptr_t x = 0; if (v != "null" && v != "0") { x = ResolveObj(v); if (!x) { err = "cannot resolve object " + v; return false; } } W(&x, 8); }
+  else if (ty == "ObjectProperty" || ty == "ClassProperty") { uintptr_t x = 0; if (v != "null" && v != "0") { x = UeResolveObj(v); if (!x) { err = "cannot resolve object " + v; return false; } } W(&x, 8); }
   else if (ty == "NameProperty") { uint64_t n; if (!MakeFName(v, n)) { err = "FName ctor failed"; return false; } W(&n, 8); }
   else if (ty == "StrProperty") {
     if (!keep) { FStr s; if (!GameFString(v, s, err)) return false; W(&s, sizeof(s)); return ok; }
@@ -258,7 +270,7 @@ static int HiddenOf(uintptr_t o) {
 static uintptr_t PlayerController() {
   return FindFirst([](uintptr_t o) { return !IsDefault(o) && IsA(o, "PlayerController") && RdP(o + 0) && OuterOf(o) && ClassName(OuterOf(o)) == "Level"; });
 }
-uintptr_t ResolveObj(const std::string& s) {
+uintptr_t UeResolveObj(const std::string& s) {
   if (!g_ok || s.empty()) return 0;
   uint64_t v;
   if ((s.rfind("0x", 0) == 0 || s.rfind("0X", 0) == 0) && ParseU64(s, v)) return IsObj(v) ? v : 0;
@@ -273,7 +285,7 @@ uintptr_t ResolveObj(const std::string& s) {
 static uintptr_t ResolveStruct(const std::string& s) {
   uintptr_t o = FindFirst([&](uintptr_t x) { std::string cn = ClassName(x); return (cn == "Class" || cn == "ScriptStruct" || cn == "BlueprintGeneratedClass" || cn == "WidgetBlueprintGeneratedClass") && Lower(ObjName(x)) == Lower(s); });
   if (o) return o;
-  o = ResolveObj(s); if (!o) return 0;
+  o = UeResolveObj(s); if (!o) return 0;
   std::string cn = ClassName(o); return (cn.find("Class") != std::string::npos || cn == "ScriptStruct") ? o : ClassOf(o);
 }
 
@@ -304,7 +316,7 @@ static std::string CallFunc(uintptr_t obj, const std::string& fname, const std::
 
 struct Watch { int id; uintptr_t obj, prop, addr; std::string label, last; };
 static std::mutex g_wm; static std::vector<Watch> g_watches; static int g_watchId;
-void TickWatches() {
+void UeTickWatches() {
   std::lock_guard<std::mutex> l(g_wm);
   for (auto& w : g_watches) { std::string v = ValueStr(w.prop, w.addr, 0, nullptr, ""); if (v != w.last) { LOG("watch %d %s: %s -> %s (tick %llu)", w.id, w.label.c_str(), w.last.c_str(), v.c_str(), H->tickCount); w.last = v; } }
 }
@@ -312,7 +324,7 @@ void TickWatches() {
 static void DumpObj(Out& o, uintptr_t a) {
   o.f("0x%llx %s %s", a, ClassName(a).c_str(), PathOf(a).c_str());
   uintptr_t c = ClassOf(a); std::string supers; for (uintptr_t s = c; s; s = SuperOf(s)) supers += (supers.empty() ? "" : " > ") + ObjName(s);
-  o.f("class chain: %s", supers.c_str()); o.f("outer: %s", DescribeObj(OuterOf(a)).c_str());
+  o.f("class chain: %s", supers.c_str()); o.f("outer: %s", UeDescribeObj(OuterOf(a)).c_str());
   for (uintptr_t s = c; s; s = SuperOf(s)) {
     int k = 0; ForProps(s, false, [&](uintptr_t) { k++; return true; }); if (!k) continue;
     o.f("-- %s", ObjName(s).c_str());
@@ -433,7 +445,7 @@ static std::string DumpFieldVt(const std::string& file) {
   return Fmt("%zu FField class vtables -> %s", rows.size(), file.c_str());
 }
 
-bool UPropAddr(const std::string& obj, const std::string& path, uintptr_t& addr, int& size, std::string& type, std::string& val, std::string& err) {
+bool UeUPropAddr(const std::string& obj, const std::string& path, uintptr_t& addr, int& size, std::string& type, std::string& val, std::string& err) {
   if (!EnsureUObj(err)) return false;
   uintptr_t o = ResolveObjCached(obj); if (!o) { err = "cannot resolve object " + obj; return false; }
   uintptr_t prop, a; if (!PropPath(o, path, prop, a, err)) return false;
@@ -444,7 +456,7 @@ bool UPropAddr(const std::string& obj, const std::string& path, uintptr_t& addr,
   addr = a; return true;
 }
 
-size_t ObjSize(uintptr_t a) {
+size_t UeObjSize(uintptr_t a) {
   if (!IsObj(a)) return 0;
   uintptr_t c = ClassOf(a); int s = c ? Rd<int>(c + S_SIZE) : 0;
   return s > 0 ? (size_t)s : 0;
@@ -460,7 +472,7 @@ static std::string PropAtIn(uintptr_t st, int off, int depth) {
   });
   return r;
 }
-std::string PropAtOffset(uintptr_t obj, int off) {
+std::string UePropAtOffset(uintptr_t obj, int off) {
   if (!IsObj(obj)) return "";
   return PropAtIn(ClassOf(obj), off, 2);
 }
@@ -567,7 +579,7 @@ static bool PropBool(uintptr_t o, const char* path, bool def) {
 
 static void CmdComps(const std::vector<std::string>& t, Out& o) {
   if (t.size() < 2) { o.line("usage: comps <actor> [filter=<substr>] [flat]"); return; }
-  uintptr_t actor = ResolveObj(t[1]); if (!actor) { o.line("cannot resolve object " + t[1]); return; }
+  uintptr_t actor = UeResolveObj(t[1]); if (!actor) { o.line("cannot resolve object " + t[1]); return; }
   uopt::Args ao = uopt::Parse(t, 2); std::string flt = Lower(ao.Str("filter")); bool flat = ao.Flag("flat");
   std::vector<CompRow> rows; int n = NumObjects();
   for (int i = 0; i < n; i++) {
@@ -705,14 +717,14 @@ static std::string Vec3S(const double v[3]) { return Fmt("%.1f,%.1f,%.1f", v[0],
 static void CmdPose(const std::vector<std::string>& t, Out& o) {
   if (t.size() < 2) { o.line("usage: pose <actor> [bones=hands|arms|legs|all|a,b,c] [ref=<actor>] [comps] [space=world|comp|parent]"); return; }
   uopt::Args ao = uopt::Parse(t, 2);
-  uintptr_t actor = ResolveObj(t[1]); if (!actor) { o.line("cannot resolve object " + t[1]); return; }
+  uintptr_t actor = UeResolveObj(t[1]); if (!actor) { o.line("cannot resolve object " + t[1]); return; }
   std::string err, spaceName = Lower(ao.Str("space", "world")), boneSpec = ao.Str("bones", "hands");
   int dispSpace = spaceName == "world" ? 0 : spaceName == "comp" ? 2 : spaceName == "parent" ? 3 : -1;
   if (dispSpace < 0) { o.line("error: space must be world, comp or parent"); return; }
   uintptr_t mesh = FindPoseMesh(actor); if (!mesh) { o.line("error: no SkeletalMeshComponent on " + t[1]); return; }
   uintptr_t refActor = 0, refMesh = 0;
   if (ao.Has("ref")) {
-    refActor = ResolveObj(ao.Str("ref")); if (!refActor) { o.line("cannot resolve object " + ao.Str("ref")); return; }
+    refActor = UeResolveObj(ao.Str("ref")); if (!refActor) { o.line("cannot resolve object " + ao.Str("ref")); return; }
     refMesh = FindPoseMesh(refActor); if (!refMesh) { o.line("error: no SkeletalMeshComponent on " + ao.Str("ref")); return; }
   }
   std::vector<std::string> bones;
@@ -767,7 +779,7 @@ static void CmdPose(const std::vector<std::string>& t, Out& o) {
   o.f("%zu bones %d comps, %d flags", rows.size(), ncomps, flags);
 }
 #include "ue_containers.inc"
-bool HandleUObj(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o) {
+bool UeHandle(const std::string& c, const std::vector<std::string>& t, const std::string& line, Out& o) {
   static const char* cmds[] = { "find", "obj", "get", "set", "call", "funcs", "classes", "props", "watchprop", "unwatch", "con", "uinfo", "dumpfuncs", "dumpvtables", "dumpsdk", "dumpfieldvt", "scene", "snap", "comps", "pose", "tarray", "tset", "tmap", "layoutcheck" };
   if (std::find_if(std::begin(cmds), std::end(cmds), [&](const char* x) { return c == x; }) == std::end(cmds)) return false;
   { std::string why; if (!EnsureUObj(why)) { o.line(why); return true; } }
@@ -797,7 +809,7 @@ bool HandleUObj(const std::string& c, const std::vector<std::string>& t, const s
     if (wantNear) {
       std::string ne = ao.Str("near");
       if (!uopt::ParseXyz(ne, nearLoc)) {
-        uintptr_t no = ResolveObj(ne);
+        uintptr_t no = UeResolveObj(ne);
         if (!no) { o.line("error: cannot resolve near=" + ne); return true; }
         if (!ActorLoc(no, nearLoc)) { o.line("error: near=" + ne + " has no RootComponent.RelativeLocation"); return true; }
       }
@@ -846,7 +858,7 @@ bool HandleUObj(const std::string& c, const std::vector<std::string>& t, const s
     { size_t sp = cmd.find(' '); std::string nm = cmd.substr(0, sp), val = sp == std::string::npos ? "" : cmd.substr(sp + 1);
       while (!val.empty() && val[0] == ' ') val.erase(0, 1);
       std::string r = CVarCmd(nm, sp == std::string::npos || val.empty() ? nullptr : &val); if (!r.empty()) { o.line("cvar " + r); return true; } }
-    uintptr_t ksl = ResolveObj("Default__KismetSystemLibrary"), pc = PlayerController();
+    uintptr_t ksl = UeResolveObj("Default__KismetSystemLibrary"), pc = PlayerController();
     if (!ksl || !pc) { o.line("need KismetSystemLibrary CDO and a PlayerController"); return true; }
     o.line(CallFunc(ksl, "ExecuteConsoleCommand", { Fmt("0x%llx", pc), cmd, "null" }, &o)); return true;
   }
@@ -867,7 +879,7 @@ bool HandleUObj(const std::string& c, const std::vector<std::string>& t, const s
     }
     return true;
   }
-  uintptr_t obj = ResolveObj(t[1]); if (!obj) { o.line("cannot resolve object " + t[1]); return true; }
+  uintptr_t obj = UeResolveObj(t[1]); if (!obj) { o.line("cannot resolve object " + t[1]); return true; }
   if (c == "obj") { DumpObj(o, obj); return true; }
   if (c == "call") {
     if (t.size() < 3) { o.line("usage: call <obj> <Func> [args]"); return true; }
@@ -962,7 +974,7 @@ void InitUObj() {
   }
   { std::lock_guard<std::mutex> l(g_gm); g_why.clear(); g_gate.Reset(); }
 }
-bool UObjReady() { return g_ok; }
+bool UeReady() { return g_ok; }
 int ProcessEventSlot() { return PE_VSLOT < 0 ? -1 : PE_VSLOT / 8; }
 
 static std::mutex g_initM;
@@ -980,4 +992,8 @@ static bool EnsureUObj(std::string& why) {
 }
 
 
-bool TryUObj(std::string& why) { return EnsureUObj(why); }
+bool UeTry(std::string& why) { return EnsureUObj(why); }
+
+static bool UeDetect() { return ImageHasWide(L"++UE4") || ImageHasWide(L"++UE5") || ExeNameHas("-Win64-Shipping") || ExeNameHas("-WinGDK-Shipping"); }
+static std::string UeLabel(uintptr_t a) { return IsObj(a) ? ObjName(a) : std::string(); }
+extern const EngineBackend kUnreal = { "unreal", UeDetect, UeTry, UeReady, UeTickWatches, UeResolveObj, UeObjSize, UePropAtOffset, UeDescribeObj, UeLabel, UeHandle, UeUPropAddr };

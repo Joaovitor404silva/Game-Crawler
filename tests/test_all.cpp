@@ -1,21 +1,21 @@
-#include "../src/core.h"
-#include "../src/json_out.h"
-#include "../src/agg.h"
-#include "../src/sampler.h"
-#include "../src/stackwalk.h"
-#include "../src/stats.h"
-#include "../src/ue_opts.h"
-#include "../src/memdiff.h"
-#include "../src/retry.h"
-#include "../src/pose.h"
-#include "../src/containers.h"
-#include "../src/plug_restore.h"
-#include "../src/hwhook.h"
+#include "core.h"
+#include "json_out.h"
+#include "agg.h"
+#include "sampler.h"
+#include "stackwalk.h"
+#include "stats.h"
+#include "opts.h"
+#include "memdiff.h"
+#include "retry.h"
+#include "pose.h"
+#include "containers.h"
+#include "plug_restore.h"
+#include "hwhook.h"
 #include <map>
 #include <thread>
 #include <atomic>
 #include <stdio.h>
-#include "../src/ue_scan.h"
+#include "ue_scan.h"
 
 extern HostApi g_testApi;
 extern std::vector<std::string> g_testLog;

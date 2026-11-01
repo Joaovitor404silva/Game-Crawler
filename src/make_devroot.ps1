@@ -1,20 +1,26 @@
 ﻿param(
   [Parameter(Mandatory = $true)][string]$Exe,
-  [string]$DevRoot
+  [string]$DevRoot,
+  [string]$Root
 )
 $ErrorActionPreference = 'Stop'
 $Exe = (Resolve-Path $Exe).Path
 if ($Exe -notlike '*.exe') { throw "not an exe: $Exe" }
 $win64 = Split-Path $Exe
+if ($Root) { $root = (Resolve-Path $Root).Path.TrimEnd('\'); if ($win64 -notlike "$root*") { throw "exe is not inside $root" } } else {
 $root = $win64
 while ($root -and -not (Test-Path (Join-Path $root 'Engine'))) { $root = Split-Path $root }
-if (-not $root) { throw "no Engine folder above $Exe; is this an Unreal Engine game?" }
+if (-not $root) {
+  $root = $win64; $p = $win64
+  while ($p) { $up = Split-Path $p; if ($up -and (Split-Path $up -Leaf) -eq 'common') { $root = $p; break }; $p = $up }
+}
+}
 $name = Split-Path $root -Leaf
 if (-not $DevRoot) { $DevRoot = Join-Path 'C:\GameCrawlerRoot' ($name -replace '[^A-Za-z0-9._-]', '_') }
 $r = $DevRoot.TrimEnd('\')
 if ($r -like "$root*") { throw 'DevRoot must be outside the game folder' }
 $skipFiles = 'dwmapi.dll', 'version.dll', 'dxgi.dll', 'winmm.dll', 'xinput1_3.dll', 'dinput8.dll', 'd3d11.dll', 'UE4SS.dll', 'UE4SS-settings.ini'
-$skipDirs = 'ue4ss', 'Mods', '~mods', 'LogicMods', 'Saved'
+$skipDirs = 'ue4ss', 'Mods', '~mods', 'LogicMods', 'Saved', 'appdata'
 function MkJ($p, $t) { if (-not (Test-Path $p)) { New-Item -ItemType Junction -Path $p -Target $t | Out-Null } }
 function MkH($p, $t) { if (-not (Test-Path $p)) { try { New-Item -ItemType HardLink -Path $p -Target $t -ErrorAction Stop | Out-Null } catch { Copy-Item $t $p } } }
 $descend = @($win64)

@@ -89,7 +89,7 @@ extern "C" __declspec(dllexport) void CoreTick() {
   std::deque<Job*> q;
   { std::lock_guard<std::mutex> l(g_qm); q.swap(g_q); }
   for (Job* j : q) { j->fn(); SetEvent(j->done); }
-  TickWatches();
+  EngineTick();
   TickPlugins();
   TickAutoexec();
 }
@@ -114,6 +114,7 @@ static bool ParseTerm(const char*& p, uint64_t& v, std::string& err) {
   if (ParseU64(t, v)) return true;
   if (t.find("::") != std::string::npos || t.rfind("sym:", 0) == 0) { uintptr_t x; if (LookupName(t.rfind("sym:", 0) == 0 ? t.substr(4) : t, x)) { v = x; return true; } }
   uintptr_t o = ResolveObjCached(t); if (o) { v = o; return true; }
+  { uintptr_t x; if (LookupName(t, x)) { v = x; return true; } }
   err = "bad term '" + t + "'"; return false;
 }
 static bool ParseExpr(const char*& p, uint64_t& v, std::string& err) {
@@ -187,9 +188,16 @@ static uint32_t FuncStart(uintptr_t a) {
   }
   return rf->BeginAddress;
 }
+static bool LookupExport(const std::string& n, uintptr_t& a) {
+  size_t bang = n.find('!');
+  if (bang != std::string::npos) { HMODULE m = GetModuleHandleA(n.substr(0, bang).c_str()); if (!m) m = GetModuleHandleA((n.substr(0, bang) + ".dll").c_str()); FARPROC p = m ? GetProcAddress(m, n.substr(bang + 1).c_str()) : nullptr; if (!p) return false; a = (uintptr_t)p; return true; }
+  HMODULE mods[1024]; DWORD need = 0; if (!EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &need)) return false;
+  for (DWORD i = 0; i < need / sizeof(HMODULE) && i < 1024; i++) if (FARPROC p = GetProcAddress(mods[i], n.c_str())) { a = (uintptr_t)p; return true; }
+  return false;
+}
 bool LookupName(const std::string& n, uintptr_t& a) {
-  NameTab* t = g_names; if (!t) return false; auto it = t->byLower.find(Lower(n)); if (it == t->byLower.end()) return false;
-  a = H->base + it->second; return true;
+  if (NameTab* t = g_names) { auto it = t->byLower.find(Lower(n)); if (it != t->byLower.end()) { a = H->base + it->second; return true; } }
+  return LookupExport(n, a);
 }
 std::string Sym(uintptr_t a) {
   if (InModule(a)) {
@@ -317,6 +325,7 @@ static void HandleText(const char* line, EmitFn emit, void* ctx) {
   std::string c = Lower(t[0]); std::string err; uint64_t a;
   auto rest = [&](size_t i) { size_t p = 0; for (size_t k = 0; k < i; k++) { while (p < L.size() && L[p] == ' ') p++; if (p < L.size() && L[p] == '"') { p = L.find('"', p + 1); p = p == std::string::npos ? L.size() : p + 1; } else while (p < L.size() && L[p] != ' ') p++; } while (p < L.size() && L[p] == ' ') p++; return L.substr(std::min(p, L.size())); };
   if (c == "help") o.line(HELP);
+  else if (c == "engine") o.line(EngineReport());
   else if (c == "ver") o.f("GameCrawlerCore built %s %s ticks=%llu%s", __DATE__, __TIME__, H->tickCount, BuildInfo().c_str());
   else if (c == "ping") o.f("pong pid=%lu base=0x%llx ticks=%llu core=loaded", GetCurrentProcessId(), (unsigned long long)H->base, H->tickCount);
   else if (c == "mark") {
@@ -342,8 +351,8 @@ static void HandleText(const char* line, EmitFn emit, void* ctx) {
   }
   else if (c == "addr") {
     if (t.size() < 2) { o.line("usage: addr <name|substring>"); return; }
-    uintptr_t x; if (LookupName(t[1], x)) { o.f("0x%llx  rva 0x%llx  %s", x, x - H->base, Sym(x).c_str()); return; }
-    NameTab* tb = g_names; if (!tb) { o.line("names.tsv not loaded"); return; }
+    uintptr_t x; if (LookupName(t[1], x)) { if (InModule(x)) o.f("0x%llx  rva 0x%llx  %s", x, x - H->base, Sym(x).c_str()); else o.f("0x%llx  %s", x, Sym(x).c_str()); return; }
+    NameTab* tb = g_names; if (!tb) { o.line("not found (exact export name or module!export; names.tsv not loaded for substring search)"); return; }
     std::string lq = Lower(t[1]); int hits = 0;
     for (auto& e : tb->v) if (Lower(e.second).find(lq) != std::string::npos && hits++ < 40) o.f("0x%llx  rva 0x%x  %s", H->base + e.first, e.first, e.second.c_str());
     o.f("%d matches", hits);
@@ -382,7 +391,7 @@ static void HandleText(const char* line, EmitFn emit, void* ctx) {
     auto h = Aob(rest(1), g_textBeg, g_textEnd, 32);
     for (auto x : h) o.f("0x%llx  %s", x, Sym(x).c_str()); o.f("%zu hits (max 32)", h.size());
   }
-  else if (!HandleUObj(c, t, L, o) && !HandleHooks(c, t, o) && !HandleProbe(c, t, L, o) && !HandlePlugins(c, t, o)) o.line("unknown command (help)");
+  else if (!EngineHandle(c, t, L, o) && !HandleHooks(c, t, o) && !HandleProbe(c, t, L, o) && !HandlePlugins(c, t, o)) o.line("unknown command (help)");
 }
 
 extern "C" __declspec(dllexport) void CoreHandle(const char* line, EmitFn emit, void* ctx) {
@@ -415,7 +424,7 @@ extern "C" __declspec(dllexport) void CoreHandle(const char* line, EmitFn emit, 
 
 static HANDLE g_warm; static volatile LONG g_warmStop;
 static DWORD WINAPI WarmThread(LPVOID) {
-  while (!g_warmStop && !UObjReady()) { std::string w; TryUObj(w); for (int i = 0; i < 10 && !g_warmStop; i++) Sleep(100); }
+  while (!g_warmStop && !EngineReady()) { std::string w; EngineTry(w); for (int i = 0; i < 10 && !g_warmStop; i++) Sleep(100); }
   return 0;
 }
 extern "C" __declspec(dllexport) int CoreInit(HostApi* api) {
@@ -426,7 +435,7 @@ extern "C" __declspec(dllexport) int CoreInit(HostApi* api) {
   for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) if (!memcmp(sec[i].Name, ".text", 5)) { g_textBeg = H->base + sec[i].VirtualAddress; g_textEnd = g_textBeg + sec[i].Misc.VirtualSize; }
   LoadNatives();
   LOG("names.tsv: %d entries", LoadNames());
-  { std::string w; TryUObj(w); }
+  { std::string w; EngineTry(w); }
   g_warmStop = 0; g_warm = CreateThread(nullptr, 0, WarmThread, nullptr, 0, nullptr);
   InitHooks();
   InitPlugins();

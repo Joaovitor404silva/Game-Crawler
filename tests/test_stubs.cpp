@@ -1,4 +1,4 @@
-#include "../src/core.h"
+#include "core.h"
 #include <mutex>
 
 std::vector<std::string> g_testLog;
@@ -9,18 +9,17 @@ static void TestLog(const char* fmt, ...) {
 }
 HostApi g_testApi = { 1, TestLog, 0, 0, nullptr, 0 };
 
-void InitUObj() {}
-bool TryUObj(std::string& why) { why = "no reflection in tests"; return false; }
-bool UObjReady() { return true; }
-int ProcessEventSlot() { return -1; }
-void TickWatches() {}
+bool EngineTry(std::string& why) { why = "no reflection in tests"; return false; }
+bool EngineReady() { return true; }
+void EngineTick() {}
+std::string EngineReport() { return "engine none"; }
 uintptr_t ResolveObj(const std::string&) { return 0; }
 std::string DescribeObj(uintptr_t) { return ""; }
-bool HandleUObj(const std::string&, const std::vector<std::string>&, const std::string&, Out&) { return false; }
+std::string ObjLabel(uintptr_t) { return ""; }
+bool EngineHandle(const std::string&, const std::vector<std::string>&, const std::string&, Out&) { return false; }
 size_t ObjSize(uintptr_t) { return 0; }
 std::string PropAtOffset(uintptr_t, int) { return ""; }
-std::string ObjName(uintptr_t) { return "?"; }
-bool IsObj(uintptr_t) { return false; }
+
 bool UPropAddr(const std::string&, const std::string&, uintptr_t&, int&, std::string&, std::string&, std::string& err) { err = "no reflection in tests"; return false; }
 void InitPlugins() {}
 void ShutdownPlugins() {}

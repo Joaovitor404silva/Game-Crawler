@@ -25,7 +25,7 @@ static void CmdContainer(const std::string& c, const std::vector<std::string>& t
   }
   if (t.size() < 3) { o.line("usage: " + c + " <obj> <Prop.Path> [max=N]" + (c == "tmap" ? " [key=<text>]" : "") + (c == "tset" ? " | tset raw <addr> <elemsize> [max]" : "")); return; }
   uopt::Args ao = uopt::Parse(t, 3);
-  uintptr_t obj = ResolveObj(t[1]); if (!obj) { o.line("cannot resolve object " + t[1]); return; }
+  uintptr_t obj = UeResolveObj(t[1]); if (!obj) { o.line("cannot resolve object " + t[1]); return; }
   uintptr_t p = 0, a = 0; std::string err;
   if (!PropPath(obj, t[2], p, a, err)) {
     if (err.compare(0, 12, "no property ") == 0) err += " (not a UPROPERTY; for a raw TSet use: tset raw <addr> <elemsize> [max])";
@@ -70,7 +70,7 @@ static void CmdLayoutCheck(const std::vector<std::string>& t, Out& o) {
   if (t.size() < 2) { o.line("usage: layoutcheck <Class> [obj]"); return; }
   uintptr_t cls = ResolveStruct(t[1]); if (!cls) { o.line("cannot resolve class " + t[1]); return; }
   uintptr_t obj = 0;
-  if (t.size() > 2) { obj = ResolveObj(t[2]); if (!obj) { o.line("cannot resolve object " + t[2]); return; } }
+  if (t.size() > 2) { obj = UeResolveObj(t[2]); if (!obj) { o.line("cannot resolve object " + t[2]); return; } }
   int props = 0, bad = 0; std::vector<std::string> js;
   o.line("name                           live_off size   status");
   ForProps(cls, false, [&](uintptr_t q) {

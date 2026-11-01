@@ -59,12 +59,23 @@ static void Pump() {
     ReleaseSRWLockShared(&g_coreLock);
   }
 }
-static void __fastcall HkPE(void* obj, void* fn, void* parms) {
-  if (!g_inPump && GetCurrentThreadId() == g_mainTid) {
-    LARGE_INTEGER now; QueryPerformanceCounter(&now);
-    if (now.QuadPart - g_lastPump >= g_pumpGap) { g_lastPump = now.QuadPart; g_inPump = true; Pump(); g_inPump = false; }
-  }
-  g_origPE(obj, fn, parms);
+static void TryPump() {
+  if (g_inPump || GetCurrentThreadId() != g_mainTid) return;
+  LARGE_INTEGER now; QueryPerformanceCounter(&now);
+  if (now.QuadPart - g_lastPump >= g_pumpGap) { g_lastPump = now.QuadPart; g_inPump = true; Pump(); g_inPump = false; }
+}
+static void __fastcall HkPE(void* obj, void* fn, void* parms) { TryPump(); g_origPE(obj, fn, parms); }
+typedef BOOL(WINAPI* PeekFn)(LPMSG, HWND, UINT, UINT, UINT);
+static PeekFn g_origPeekW, g_origPeekA;
+static BOOL WINAPI HkPeekW(LPMSG m, HWND w, UINT a, UINT b, UINT r) { TryPump(); return g_origPeekW(m, w, a, b, r); }
+static BOOL WINAPI HkPeekA(LPMSG m, HWND w, UINT a, UINT b, UINT r) { TryPump(); return g_origPeekA(m, w, a, b, r); }
+static void HookMessagePump() {
+  HMODULE u = LoadLibraryW(L"user32.dll");
+  void* pw = u ? (void*)GetProcAddress(u, "PeekMessageW") : nullptr; void* pa = u ? (void*)GetProcAddress(u, "PeekMessageA") : nullptr;
+  MH_STATUS w = pw ? MH_CreateHook(pw, (void*)HkPeekW, (void**)&g_origPeekW) : MH_ERROR_FUNCTION_NOT_FOUND, a = pa ? MH_CreateHook(pa, (void*)HkPeekA, (void**)&g_origPeekA) : MH_ERROR_FUNCTION_NOT_FOUND;
+  if (w == MH_OK) w = MH_EnableHook(pw);
+  if (a == MH_OK) a = MH_EnableHook(pa);
+  Log("PeekMessage pump: W=%d A=%d main thread %lu", w, a, g_mainTid);
 }
 static int HookPump(void* target) {
   if (g_peTarget) return g_peTarget == target ? 1 : -2;
@@ -151,6 +162,7 @@ static DWORD WINAPI MainThread(LPVOID) {
   Log("MinHook init %d", MH_Initialize());
   g_mainTid = MainThreadId(); g_api.gameThreadId = g_mainTid;
   LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_pumpGap = f.QuadPart / 500;
+  HookMessagePump();
   LoadCore();
   char ps[16]; if (GetEnvironmentVariableA("CRAWLER_PORT", ps, sizeof ps)) { int p = atoi(ps); if (p > 0 && p < 65536) PORT = p; }
   WSADATA w; WSAStartup(MAKEWORD(2, 2), &w);
