@@ -29,7 +29,14 @@ async function main() {
   const s1 = await fake(delayed), s2 = await fake(delayed), s3 = await fake(delayed);
   const p1 = s1.address().port, p2 = s2.address().port, p3 = s3.address().port;
   const logdir = fs.mkdtempSync(path.join(os.tmpdir(), 'crawler_mcp_'));
-  const env = Object.assign({}, process.env, { CRAWLER_PORT: String(p1), CRAWLER_ALL_PORTS: [p1, p2, p3].join(','), CRAWLER_LOGDIR: logdir, CRAWLER_TIMEOUT: '600' });
+  // fake agentd: answers look with a saved image path, like the real one
+  const lookJpg = path.join(logdir, 'sim-x.jpg');
+  fs.writeFileSync(lookJpg, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  const fakeAgent = await new Promise(res => {
+    const a = net.createServer(s => s.on('data', d => { if (/^look/.test(d.toString())) s.write(`image ${lookJpg} 2x2\npos 0 0 0\n.\n`); }));
+    a.listen(0, '127.0.0.1', () => res(a));
+  });
+  const env = Object.assign({}, process.env, { CRAWLER_PORT: String(p1), CRAWLER_ALL_PORTS: [p1, p2, p3].join(','), CRAWLER_LOGDIR: logdir, CRAWLER_TIMEOUT: '600', AGENT_PORT: String(fakeAgent.address().port) });
   const srv = spawn(process.execPath, [path.join(root, 'mcp', 'server.js')], { env, stdio: ['pipe', 'pipe', 'inherit'] });
   let id = 0; const pending = {}; let buf = '';
   srv.stdout.on('data', d => {
@@ -44,7 +51,13 @@ async function main() {
   const tl = (await rpc('tools/list', {})).result.tools;
   const names = tl.map(t => t.name);
   for (const n of ['watchw', 'agg', 'scene', 'snap', 'sample', 'mark', 'hits', 'log', 'hook', 'bp', 'status']) ok(names.includes(n), 'tool listed ' + n);
-  ok(tl.every(t => t.inputSchema.properties && t.inputSchema.properties.game && t.inputSchema.properties.json), 'every tool has game + json');
+  const crawlerTools = tl.filter(t => !t.name.startsWith('agent_')); // agent_* talk to agentd, not a crawler port
+  ok(crawlerTools.every(t => t.inputSchema.properties && t.inputSchema.properties.game && t.inputSchema.properties.json), 'every crawler tool has game + json');
+  for (const n of ['agent_state', 'agent_goto', 'agent_face', 'agent_do', 'agent_wait', 'agent_look', 'agent_mark', 'agent_calibrate', 'agent_tp', 'agent_stop']) ok(names.includes(n), 'tool listed ' + n);
+  const lk = await rpc('tools/call', { name: 'agent_look', arguments: { save: 'x' } });
+  const lkText = lk.result && lk.result.content.find(c => c.type === 'text');
+  ok(lk.result && lk.result.content[0].type === 'image' && lkText && lkText.text.includes('saved ' + lookJpg), 'agent_look returns the image and the saved path');
+  fakeAgent.close();
   ok(/E client 3/.test(tl[0].inputSchema.properties.game.description) && /all/.test(tl[0].inputSchema.properties.game.description), 'game description mentions E and all');
   ok(/E: 27064/.test(fs.readFileSync(path.join(root, 'mcp', 'server.js'), 'utf8')), 'GAMES has E=27064');
 

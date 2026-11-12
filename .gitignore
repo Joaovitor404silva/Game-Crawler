@@ -33,3 +33,10 @@ sdk/
 bench/
 plugins/*/
 !plugins/example/
+agent/logs/
+agent/maps/
+__pycache__/
+tests/agent/bin/
+agent/notes/
+!plugins/agent/
+tools/.venv-vision/

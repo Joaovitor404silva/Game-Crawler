@@ -191,6 +191,8 @@ const tools = [
   ['reload_core', 'Hot reload GameCrawlerCore.dll after `src\\build.bat core`.', S({}), () => game('reload')],
   ['raw', 'Run any Game Crawler CLI command line verbatim (see `help`).', S({ command: str('e.g. help, aob 48 8B ?? 20, uinfo') }, ['command']), a => game(a.command)],
 ];
+tools.push(...require('./agent.js')({ S, str, int, HOME }));
+const AGENT_TOOL = new Set(tools.filter(t => t[0].startsWith('agent_')).map(t => t[0]));
 const PLUG = path.join(HOME, 'plugins');
 for (const d of fs.existsSync(PLUG) ? fs.readdirSync(PLUG) : []) {
   const f = path.join(PLUG, d, 'mcp.js');
@@ -198,7 +200,7 @@ for (const d of fs.existsSync(PLUG) ? fs.readdirSync(PLUG) : []) {
   try { for (const t of require(f)({ S, str, int, OBJ, cmd, game })) if (!tools.some(x => x[0] === t[0])) tools.push(t); }
   catch (e) { process.stderr.write('plugin ' + d + ' mcp.js: ' + e.message + '\n'); }
 }
-for (const t of tools) if (t[2] && t[2].properties) { t[2].properties.game = { type: 'string', description: 'which dev game: B client (default), A host, D client 2, C host 2, E client 3, all (run on every port, one section each), or a port. Applied per call, no reconnect needed.' };
+for (const t of tools) if (t[2] && t[2].properties && !AGENT_TOOL.has(t[0])) { t[2].properties.game = { type: 'string', description: 'which dev game: B client (default), A host, D client 2, C host 2, E client 3, all (run on every port, one section each), or a port. Applied per call, no reconnect needed.' };
   t[2].properties.json = { type: 'boolean', description: 'ask the game for structured JSON ({ok,cmd,port,ms,data,lines}) instead of text' };
   t[2].properties.out_file = { type: 'string', description: 'write the FULL output (no size cap) to this file path; the reply is the path + a preview' }; }
 const byName = Object.fromEntries(tools.map(t => [t[0], t]));
@@ -214,6 +216,12 @@ async function onMessage(m) {
     if (!t) return send({ jsonrpc: '2.0', id: m.id, error: { code: -32602, message: 'unknown tool ' + (m.params && m.params.name) } });
     let text, isError = false;
     const args = m.params.arguments || {}, g = args.game, json = args.json === true;
+    if (AGENT_TOOL.has(t[0])) { // own daemon, may return image content
+      let r;
+      try { r = await t[3](args); } catch (e) { r = 'error: ' + e.message; }
+      if (typeof r === 'string') r = { content: [{ type: 'text', text: r }] };
+      return send({ jsonrpc: '2.0', id: m.id, result: { content: r.content, isError: r.content.some(c => c.type === 'text' && /^error:/.test(c.text)) } });
+    }
     const miss = (t[2].required || []).filter(k => args[k] === undefined || args[k] === null || args[k] === '');
     if (miss.length) return send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'error: missing required argument(s): ' + miss.join(', ') }], isError: true } });
     try {
