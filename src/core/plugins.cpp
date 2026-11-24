@@ -181,6 +181,15 @@ static std::string Build(const std::string& name, bool& ok) {
 }
 static std::string Reload(const std::string& name) {
   std::string r, err;
+  // A non-engine host such as XCL may own a useful render window without ever
+  // entering the hooked message pump. In that case there is no game-thread tick
+  // on which to run the queued loader; load command-only plugins on this server
+  // thread. UEPluginTick will naturally remain idle until a pump is available.
+  if (H->tickCount == 0) {
+    std::lock_guard<std::recursive_mutex> l(g_pm);
+    Plugin& p = g_plugs[name]; p.name = name;
+    return LoadLocked(p);
+  }
   bool ran = RunOnGame([&]() { std::lock_guard<std::recursive_mutex> l(g_pm); Plugin& p = g_plugs[name]; p.name = name; r = LoadLocked(p); }, 10000, &err);
   return ran ? r : name + ": " + err;
 }

@@ -75,7 +75,9 @@ UE_EXPORT int UEPluginCommand(const char* line, char* out, int n) {
 ```
 
 `node crawler.js where` and the MCP `raw` tool now run it. `UEPluginHelp` is the line shown by `plug list`. Commands run on the
-Game Crawler server thread, not the game thread; `get`, `set` and `call` queue themselves to the game thread.
+Game Crawler server thread, not the game thread; `get`, `set` and `call` queue themselves to the game thread. If the host has no
+hooked game-thread ticks (for example, a non-engine launcher that owns a separate child window), plugins can still load and serve
+commands; `UEPluginTick` will not run until a game-thread pump becomes available.
 
 ## 5. Add MCP tools
 
