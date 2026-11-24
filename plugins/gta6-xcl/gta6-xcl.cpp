@@ -32,14 +32,14 @@ static DWORD find_child() {
   if (snap == INVALID_HANDLE_VALUE) return 0;
   PROCESSENTRY32W e = {}; e.dwSize = sizeof(e);
   DWORD found = 0;
+  DWORD fallback = 0;
   if (Process32FirstW(snap, &e)) do {
-    if (e.th32ParentProcessID == GetCurrentProcessId() && _wcsicmp(e.szExeFile, L"xcl.exe") == 0) {
-      found = e.th32ProcessID;
-      break;
-    }
+    if (e.th32ParentProcessID != GetCurrentProcessId()) continue;
+    if (_wcsicmp(e.szExeFile, L"game_scarlett_master.exe") == 0) { found = e.th32ProcessID; break; }
+    if (!fallback && _wcsicmp(e.szExeFile, L"xcl.exe") == 0) fallback = e.th32ProcessID;
   } while (Process32NextW(snap, &e));
   CloseHandle(snap);
-  return found;
+  return found ? found : fallback;
 }
 
 static BOOL CALLBACK find_window(HWND hwnd, LPARAM param) {
@@ -80,16 +80,31 @@ static const char* vk_name(const char* name, WORD* vk) {
 static bool send_key(WORD vk, int hold_ms) {
   HWND hwnd = locate_game();
   if (!hwnd) return false;
+  DWORD target_tid = GetWindowThreadProcessId(hwnd, nullptr);
+  DWORD current_tid = GetCurrentThreadId();
+  HWND foreground = GetForegroundWindow();
+  DWORD foreground_tid = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+  bool attached_foreground = foreground_tid && foreground_tid != current_tid && AttachThreadInput(current_tid, foreground_tid, TRUE);
+  bool attached_target = target_tid && target_tid != current_tid && AttachThreadInput(current_tid, target_tid, TRUE);
   ShowWindow(hwnd, SW_RESTORE);
   BringWindowToTop(hwnd);
   SetForegroundWindow(hwnd);
+  SetActiveWindow(hwnd);
+  SetFocus(hwnd);
   for (int i = 0; i < 20 && GetForegroundWindow() != hwnd; ++i) Sleep(25);
-  if (GetForegroundWindow() != hwnd) return false;
-  INPUT in = {}; in.type = INPUT_KEYBOARD; in.ki.wVk = vk;
-  if (SendInput(1, &in, sizeof(in)) != 1) return false;
-  Sleep(hold_ms);
-  in.ki.dwFlags = KEYEVENTF_KEYUP;
-  return SendInput(1, &in, sizeof(in)) == 1;
+  bool ok = GetForegroundWindow() == hwnd;
+  if (ok) {
+    INPUT in = {}; in.type = INPUT_KEYBOARD; in.ki.wVk = vk;
+    ok = SendInput(1, &in, sizeof(in)) == 1;
+    if (ok) {
+      Sleep(hold_ms);
+      in.ki.dwFlags = KEYEVENTF_KEYUP;
+      ok = SendInput(1, &in, sizeof(in)) == 1;
+    }
+  }
+  if (attached_target) AttachThreadInput(current_tid, target_tid, FALSE);
+  if (attached_foreground) AttachThreadInput(current_tid, foreground_tid, FALSE);
+  return ok;
 }
 
 UE_EXPORT int UEPluginInit(const UEApi* a) {
