@@ -70,7 +70,7 @@ static const char* vk_name(const char* name, WORD* vk) {
   struct Key { const char* name; WORD vk; };
   static const Key keys[] = {
     {"enter", VK_RETURN}, {"space", VK_SPACE}, {"esc", VK_ESCAPE},
-    {"up", VK_UP}, {"down", VK_DOWN}, {"left", VK_LEFT}, {"right", VK_RIGHT},
+    {"up", VK_UP}, {"down", VK_DOWN}, {"left", VK_LEFT}, {"right", VK_RIGHT}, {"a", 'A'},
     {"tab", VK_TAB}, {"p", 'P'}, {"backspace", VK_BACK}
   };
   for (const auto& key : keys) if (_stricmp(name, key.name) == 0) { *vk = key.vk; return key.name; }
@@ -107,6 +107,43 @@ static bool send_key(WORD vk, int hold_ms) {
   return ok;
 }
 
+static bool click_at(int x, int y) {
+  HWND hwnd = locate_game();
+  if (!hwnd || x < 0 || x > 1000 || y < 0 || y > 1000) return false;
+  DWORD target_tid = GetWindowThreadProcessId(hwnd, nullptr);
+  DWORD current_tid = GetCurrentThreadId();
+  HWND foreground = GetForegroundWindow();
+  DWORD foreground_tid = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+  bool attached_foreground = foreground_tid && foreground_tid != current_tid && AttachThreadInput(current_tid, foreground_tid, TRUE);
+  bool attached_target = target_tid && target_tid != current_tid && AttachThreadInput(current_tid, target_tid, TRUE);
+  ShowWindow(hwnd, SW_RESTORE);
+  BringWindowToTop(hwnd);
+  SetForegroundWindow(hwnd);
+  SetActiveWindow(hwnd);
+  SetFocus(hwnd);
+  for (int i = 0; i < 20 && GetForegroundWindow() != hwnd; ++i) Sleep(25);
+  bool ok = GetForegroundWindow() == hwnd;
+  RECT client = {};
+  if (ok) ok = GetClientRect(hwnd, &client) != 0 && client.right > client.left && client.bottom > client.top;
+  if (ok) {
+    POINT point = {client.left + x * (client.right - client.left) / 1000,
+                   client.top + y * (client.bottom - client.top) / 1000};
+    ok = ClientToScreen(hwnd, &point) != 0 && SetCursorPos(point.x, point.y) != 0;
+  }
+  if (ok) {
+    INPUT in = {}; in.type = INPUT_MOUSE; in.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    ok = SendInput(1, &in, sizeof(in)) == 1;
+    if (ok) {
+      Sleep(60);
+      in.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+      ok = SendInput(1, &in, sizeof(in)) == 1;
+    }
+  }
+  if (attached_target) AttachThreadInput(current_tid, target_tid, FALSE);
+  if (attached_foreground) AttachThreadInput(current_tid, foreground_tid, FALSE);
+  return ok;
+}
+
 UE_EXPORT int UEPluginInit(const UEApi* a) {
   api = a;
   g_enabled = target_process();
@@ -116,7 +153,7 @@ UE_EXPORT int UEPluginInit(const UEApi* a) {
 
 UE_EXPORT void UEPluginTick() {}
 UE_EXPORT void UEPluginShutdown() {}
-UE_EXPORT const char* UEPluginHelp() { return "gta6 status | gta6 tap <enter|space|esc|up|down|left|right|tab|p|backspace> [hold_ms]"; }
+UE_EXPORT const char* UEPluginHelp() { return "gta6 status | gta6 tap <enter|space|esc|up|down|left|right|a|tab|p|backspace> [hold_ms] | gta6 click <x_0_1000> <y_0_1000>"; }
 
 UE_EXPORT int UEPluginCommand(const char* line, char* out, int n) {
   if (strncmp(line, "gta6", 4) || (line[4] && line[4] != ' ')) return 0;
@@ -132,11 +169,21 @@ UE_EXPORT int UEPluginCommand(const char* line, char* out, int n) {
       hwnd ? title : "");
     return 1;
   }
+  if (!strncmp(args, "click ", 6)) {
+    int x = -1, y = -1;
+    if (sscanf_s(args + 6, "%d %d", &x, &y) != 2 || x < 0 || x > 1000 || y < 0 || y > 1000) {
+      snprintf(out, n, "usage: gta6 click <x_0_1000> <y_0_1000>");
+      return 1;
+    }
+    if (click_at(x, y)) snprintf(out, n, "clicked GTA VI window at normalized client position %d,%d", x, y);
+    else snprintf(out, n, "could not focus or click the GTA VI window; run gta6 status for window discovery");
+    return 1;
+  }
   if (strncmp(args, "tap ", 4)) { snprintf(out, n, "usage: %s", UEPluginHelp()); return 1; }
   char key[32] = {}; int ms = 180;
   int got = sscanf_s(args + 4, "%31s %d", key, (unsigned)sizeof(key), &ms);
   WORD vk = 0;
-  if (got < 1 || !vk_name(key, &vk)) { snprintf(out, n, "supported keys: enter space esc up down left right tab p backspace"); return 1; }
+  if (got < 1 || !vk_name(key, &vk)) { snprintf(out, n, "supported keys: enter space esc up down left right a tab p backspace"); return 1; }
   if (ms < 40) ms = 40; if (ms > 1000) ms = 1000;
   if (send_key(vk, ms)) snprintf(out, n, "sent %s for %d ms to GTA VI window (pid %lu)", key, ms, (unsigned long)g_child_pid);
   else snprintf(out, n, "could not focus/send to the GTA VI window; run gta6 status for window discovery");
